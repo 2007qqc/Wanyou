@@ -82,6 +82,14 @@ def create_api_session():
     return session
 
 
+def get_wechat_account_keywords():
+    keywords = getattr(config, "WECHAT_ACCOUNT_KEYWORDS", None)
+    if keywords:
+        return [keyword.strip() for keyword in keywords if keyword and keyword.strip()]
+    keyword = getattr(config, "WECHAT_ACCOUNT_KEYWORD", "").strip()
+    return [keyword] if keyword else []
+
+
 def _api_get_json(session, endpoint, params, timeout):
     base_url = getattr(config, "WECHAT_PUBLIC_API_BASE_URL", "").strip().rstrip("/")
     if not base_url:
@@ -92,11 +100,8 @@ def _api_get_json(session, endpoint, params, timeout):
     if query:
         url = f"{url}?{query}"
 
-    payload = {}
-    headers = {
-        "X-Auth-Key": session.headers.get("X-Auth-Key", ""),
-    }
-    resp = requests.request("GET", url, headers=headers, data=payload, timeout=timeout)
+    headers = {"X-Auth-Key": session.headers.get("X-Auth-Key", "")}
+    resp = requests.request("GET", url, headers=headers, data={}, timeout=timeout)
     resp.raise_for_status()
 
     data = resp.json()
@@ -137,42 +142,50 @@ def _first_value(d, *keys):
     return None
 
 
-def resolve_fakeid(session, timeout):
+def resolve_fakeids(session, timeout):
     fakeid = getattr(config, "WECHAT_FAKEID", "").strip()
     if fakeid:
-        return fakeid
+        return [{"keyword": "configured", "fakeid": fakeid}]
 
-    keyword = getattr(config, "WECHAT_ACCOUNT_KEYWORD", "").strip()
-    if not keyword:
-        raise ValueError("请设置 WECHAT_FAKEID 或 WECHAT_ACCOUNT_KEYWORD")
+    keywords = get_wechat_account_keywords()
+    if not keywords:
+        raise ValueError("请设置 WECHAT_FAKEID 或 WECHAT_ACCOUNT_KEYWORDS")
 
-    payload = _api_get_json(
-        session,
-        "/account",
-        {
-            "keyword": keyword,
-            "size": getattr(config, "WECHAT_ACCOUNT_SEARCH_SIZE", 1),
-        },
-        timeout,
-    )
-    candidates = _find_first_list(payload)
-    if not candidates:
-        raise RuntimeError(f"未找到公众号: {keyword}")
+    resolved = []
+    for keyword in keywords:
+        payload = _api_get_json(
+            session,
+            "/account",
+            {
+                "keyword": keyword,
+                "size": getattr(config, "WECHAT_ACCOUNT_SEARCH_SIZE", 1),
+            },
+            timeout,
+        )
+        candidates = _find_first_list(payload)
+        if not candidates:
+            continue
+        account = candidates[0]
+        found_fakeid = _first_value(account, "fakeid", "id", "biz", "__biz")
+        if found_fakeid:
+            resolved.append({"keyword": keyword, "fakeid": str(found_fakeid).strip()})
 
-    fakeid = _first_value(candidates[0], "fakeid", "id", "biz", "__biz")
-    if not fakeid:
-        raise RuntimeError("account 接口返回中未找到 fakeid")
-    return str(fakeid).strip()
+    if not resolved:
+        raise RuntimeError("未找到任何可用公众号 fakeid")
+    return resolved
 
 
-def _normalize_article_item(raw):
+def resolve_fakeid(session, timeout):
+    resolved = resolve_fakeids(session, timeout)
+    return resolved[0]["fakeid"]
+
+
+def _normalize_article_item(raw, account_keyword=""):
     title = _first_value(raw, "title", "name") or "N/A"
     url = normalize_url(_first_value(raw, "url", "link", "content_url"))
     digest = _first_value(raw, "digest", "summary", "desc", "brief") or ""
     cover = normalize_url(_first_value(raw, "cover", "thumb_url", "image"))
-    ts = parse_timestamp(
-        _first_value(raw, "create_time", "datetime", "timestamp", "publish_time", "update_time")
-    )
+    ts = parse_timestamp(_first_value(raw, "create_time", "datetime", "timestamp", "publish_time", "update_time"))
 
     aid = _first_value(raw, "aid")
     mid = _first_value(raw, "mid", "appmsgid")
@@ -193,10 +206,11 @@ def _normalize_article_item(raw):
         "aid": aid,
         "mid": str(mid) if mid is not None else None,
         "idx": str(idx) if idx is not None else None,
+        "account_keyword": account_keyword,
     }
 
 
-def fetch_articles(session, fakeid, timeout):
+def fetch_articles(session, fakeid, timeout, account_keyword=""):
     payload = _api_get_json(
         session,
         "/article",
@@ -210,7 +224,7 @@ def fetch_articles(session, fakeid, timeout):
     records = _find_first_list(payload)
     items = []
     for record in records:
-        item = _normalize_article_item(record)
+        item = _normalize_article_item(record, account_keyword=account_keyword)
         if item.get("url"):
             items.append(item)
     return items
@@ -221,9 +235,8 @@ def fetch_article_html(session, article_url, timeout):
     encoded_url = quote(article_url, safe=":/?&=%#")
     fmt = quote(getattr(config, "WECHAT_DOWNLOAD_FORMAT", "html"), safe="")
     download_url = f"{base_url}/download?url={encoded_url}&format={fmt}"
-    payload = {}
     headers = {"X-Auth-Key": session.headers.get("X-Auth-Key", "")}
-    resp = requests.request("GET", download_url, headers=headers, data=payload, timeout=timeout)
+    resp = requests.request("GET", download_url, headers=headers, data={}, timeout=timeout)
     resp.raise_for_status()
     content_type = resp.headers.get("content-type", "").lower()
     if "text/html" in content_type:

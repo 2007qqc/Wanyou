@@ -4,7 +4,7 @@ import os
 
 import config
 from wanyou.decider import apply_keyword_rules, should_copy_with_llm
-from wanyou.wechat_client import create_api_session, dedupe_items, fetch_articles, resolve_fakeid
+from wanyou.wechat_client import create_api_session, dedupe_items, fetch_articles, resolve_fakeids
 from wanyou.wechat_content import enrich_items_with_content
 
 
@@ -73,14 +73,8 @@ def _filter_recent_days(items, days_limit):
     filtered = []
     for item in items:
         ts = item.get("timestamp")
-        if ts is None:
+        if ts is None or ts >= cutoff:
             filtered.append(item)
-            continue
-        if ts >= cutoff:
-            filtered.append(item)
-        else:
-            # 列表一般按时间倒序，提前终止可减少无效请求
-            break
     return filtered
 
 
@@ -89,9 +83,21 @@ def collect_wechat_items(days_limit=None):
     sleep_seconds = getattr(config, "WECHAT_SLEEP_SECONDS", 1)
 
     session = create_api_session()
-    fakeid = resolve_fakeid(session, timeout)
-    items = fetch_articles(session, fakeid, timeout)
+    accounts = resolve_fakeids(session, timeout)
+
+    items = []
+    for account in accounts:
+        items.extend(
+            fetch_articles(
+                session,
+                account["fakeid"],
+                timeout,
+                account_keyword=account.get("keyword", ""),
+            )
+        )
+
     items = dedupe_items(items)
+    items.sort(key=lambda item: item.get("timestamp") or 0, reverse=True)
     items = _filter_recent_days(items, days_limit)
 
     max_articles = getattr(config, "WECHAT_MAX_ARTICLES", 0)
@@ -117,8 +123,11 @@ def write_md_stream(items, stream, include_content=True, header="# 公众号公�
         title = item.get("title") or "N/A"
         url = item.get("url") or "N/A"
         digest = item.get("digest") or ""
+        account_keyword = item.get("account_keyword") or ""
 
         stream.write(f"## {title}\n\n")
+        if account_keyword:
+            stream.write(f"来源公众号: {account_keyword}\n\n")
         stream.write(f"日期: {format_datetime_text(item)}\n\n")
         stream.write(f"链接: {url}\n\n")
 
