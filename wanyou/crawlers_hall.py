@@ -107,8 +107,10 @@ def crawl_hall(doc, filename_jpg, base_images_dir):
 
     browser.quit()
     doc.write("# 新清华学堂\n\n")
+    markdown_dir = os.path.dirname(getattr(doc, "name", "")) or os.getcwd()
 
     for item in result_refined:
+        image_path = os.path.relpath(item["path"], start=markdown_dir).replace("\\", "/")
         doc.write(f"## {item['title']}\n\n")
         if len(item['date']) == 1:
             doc.write(f"日期: {(item['date'])[0]}\n\n")
@@ -118,4 +120,4 @@ def crawl_hall(doc, filename_jpg, base_images_dir):
                 doc.write(f"{date}\n\n")
         doc.write(f"地点: {item['location']}\n\n")
         doc.write('票价: \n{}\n\n'.format(re.sub('\n', '\n\n', item['price'])))
-        doc.write('![]({})\n\n'.format(item['path']))
+        doc.write(f"![]({image_path})\n\n")

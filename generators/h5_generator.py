@@ -6,15 +6,74 @@ from typing import List
 import config
 
 
-def markdown_to_h5_html(markdown_text: str, title: str = "") -> str:
+def _score_text(text: str) -> tuple[int, int]:
+    cjk = sum(1 for ch in text if "\u4e00" <= ch <= "\u9fff")
+    latin1_noise = sum(1 for ch in text if "\u00c0" <= ch <= "\u00ff")
+    return cjk, -latin1_noise
+
+
+def _maybe_fix_mojibake(text: str) -> str:
+    cleaned = text.replace("\ufeff", "").strip()
+    try:
+        repaired = cleaned.encode("latin1").decode("utf-8")
+    except Exception:
+        return cleaned
+    if _score_text(repaired) > _score_text(cleaned):
+        return repaired
+    return cleaned
+
+
+def _should_skip_line(text: str) -> bool:
+    stripped = text.strip()
+    cjk, latin1_penalty = _score_text(stripped)
+    latin1_noise = -latin1_penalty
+    if not stripped or stripped == "\ufeff":
+        return True
+    if stripped.startswith("[English]("):
+        return True
+    if stripped.startswith("[![]("):
+        return True
+    if stripped.startswith("* [") and "](" in stripped:
+        return True
+    if " > " in stripped and "](" in stripped:
+        return True
+    if latin1_noise >= 4 and cjk <= latin1_noise:
+        return True
+    return False
+
+
+def _resolve_image_src(src: str, markdown_path: str, output_path: str) -> str:
+    cleaned = src.strip().strip("<>").strip('"').strip("'")
+    if not cleaned:
+        return cleaned
+    if re.match(r"^(https?:)?//", cleaned):
+        return cleaned
+
+    normalized = cleaned.replace("\\", os.sep).replace("/", os.sep)
+    candidates = []
+
+    if os.path.isabs(normalized):
+        candidates.append(normalized)
+    else:
+        candidates.append(os.path.normpath(os.path.join(os.getcwd(), normalized)))
+        candidates.append(os.path.normpath(os.path.join(os.path.dirname(markdown_path), normalized)))
+
+    resolved = next((path for path in candidates if os.path.exists(path)), candidates[0])
+    relative = os.path.relpath(resolved, start=os.path.dirname(output_path))
+    return relative.replace("\\", "/")
+
+
+def markdown_to_h5_html(markdown_text: str, markdown_path: str, output_path: str, title: str = "") -> str:
     page_title = title or getattr(config, "H5_TITLE", "万有预报")
     blocks: List[str] = []
     article_open = False
     section_open = False
 
     for line in markdown_text.splitlines():
-        stripped = line.strip()
+        stripped = _maybe_fix_mojibake(line)
         if not stripped:
+            continue
+        if _should_skip_line(stripped):
             continue
 
         if stripped.startswith("# "):
@@ -36,12 +95,12 @@ def markdown_to_h5_html(markdown_text: str, title: str = "") -> str:
 
         image_match = re.match(r"!\[[^\]]*\]\(([^)]+)\)", stripped)
         if image_match:
-            src = html.escape(image_match.group(1).strip())
-            blocks.append("<figure class='figure'>" f"<img src='{src}' alt='推送配图' loading='lazy' />" "</figure>")
+            src = html.escape(_resolve_image_src(image_match.group(1), markdown_path, output_path))
+            blocks.append(f"<figure class='figure'><img src='{src}' alt='推送配图' loading='lazy' /></figure>")
             continue
 
         if stripped.startswith("链接: "):
-            url = html.escape(stripped[3:].strip())
+            url = html.escape(stripped[4:].strip())
             blocks.append(f"<p><a href='{url}'>{url}</a></p>")
             continue
 
@@ -142,7 +201,7 @@ def export_h5(markdown_path: str, output_path: str, title: str = "") -> str:
     with open(markdown_path, "r", encoding="utf-8") as f:
         markdown_text = f.read()
 
-    html_text = markdown_to_h5_html(markdown_text, title=title)
+    html_text = markdown_to_h5_html(markdown_text, markdown_path=markdown_path, output_path=output_path, title=title)
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     with open(output_path, "w", encoding="utf-8") as f:
         f.write(html_text)

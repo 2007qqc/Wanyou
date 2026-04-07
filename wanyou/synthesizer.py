@@ -1,3 +1,4 @@
+import re
 from typing import Iterable, List
 
 import config
@@ -5,8 +6,9 @@ from wanyou.utils_llm import chat_complete
 
 
 def summarize_item(title: str, content: str, source: str = "", date: str = "") -> str:
+    structured_summary = _structured_summary(content, source=source)
     if not getattr(config, "LLM_SUMMARY_ENABLED", False):
-        return _fallback_summary(content)
+        return structured_summary or _fallback_summary(content)
 
     prompt = f"标题: {title}\n来源: {source}\n日期: {date}\n正文:\n{content[:2000]}"
     result = chat_complete(
@@ -16,7 +18,7 @@ def summarize_item(title: str, content: str, source: str = "", date: str = "") -
         temperature=0.3,
     )
     if not result:
-        return _fallback_summary(content)
+        return structured_summary or _fallback_summary(content)
     return result.strip()[: config.LLM_SUMMARY_MAX_CHARS]
 
 
@@ -129,6 +131,56 @@ def build_augmented_markdown(markdown_text: str) -> str:
 def _fallback_summary(content: str) -> str:
     text = " ".join((content or "").split())
     return text[: config.LLM_SUMMARY_MAX_CHARS]
+
+
+def _structured_summary(content: str, source: str = "") -> str:
+    text = (content or "").strip()
+    if not text:
+        return ""
+
+    explicit_summary = _extract_labeled_value(text, "报告摘要")
+    if explicit_summary:
+        return _clip_summary(explicit_summary)
+
+    explicit_summary = _extract_labeled_value(text, "摘要")
+    if explicit_summary:
+        return _clip_summary(explicit_summary)
+
+    metadata_summary = _build_metadata_summary(text, source=source)
+    if metadata_summary:
+        return _clip_summary(metadata_summary)
+
+    return ""
+
+
+def _extract_labeled_value(text: str, label: str) -> str:
+    pattern = rf"{re.escape(label)}[：:]\s*(.+)"
+    match = re.search(pattern, text, flags=re.S)
+    if not match:
+        return ""
+    value = match.group(1).strip()
+    value = re.split(r"\n(?:[A-Za-z\u4e00-\u9fff ]{1,12})[：:]", value, maxsplit=1)[0].strip()
+    return value
+
+
+def _build_metadata_summary(text: str, source: str = "") -> str:
+    if "物理系学术报告" not in source and "报告时间" not in text and "报告地点" not in text:
+        return ""
+
+    parts = []
+    for label in ["报告时间", "报告地点", "报告人"]:
+        value = _extract_labeled_value(text, label)
+        if value:
+            parts.append(f"{label}：{value}")
+
+    if not parts:
+        return ""
+    return "；".join(parts)
+
+
+def _clip_summary(text: str) -> str:
+    compact = " ".join((text or "").split())
+    return compact[: config.LLM_SUMMARY_MAX_CHARS]
 
 
 def _fallback_transition(section_name: str, has_content: bool) -> str:

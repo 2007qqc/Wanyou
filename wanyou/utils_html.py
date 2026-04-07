@@ -157,4 +157,5 @@ def html_to_markdown(container, base_url, session, images_dir, image_counter, im
 def save_content(titles, full_texts, doc):
     for title, full_text in zip(titles, full_texts):
         doc.write(f"## {title}\n\n")
-        doc.write(full_text)
+        doc.write(full_text.rstrip())
+        doc.write("\n\n")
