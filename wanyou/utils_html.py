@@ -5,6 +5,7 @@ from urllib.parse import urljoin, urlparse
 
 import html2text
 import config
+from wanyou.utils_llm import chat_complete
 
 
 def normalize_resource_urls(html_text, base_url):
@@ -154,8 +155,43 @@ def html_to_markdown(container, base_url, session, images_dir, image_counter, im
     return text
 
 
+def _rule_clean_markdown(text):
+    cleaned = (text or "").replace("\ufeff", "").replace("\r\n", "\n")
+    cleaned = re.sub(r"(?m)^[ \t]*\*{3,}[ \t]*$", "", cleaned)
+    cleaned = re.sub(r"\*{4,}", "", cleaned)
+    cleaned = re.sub(r"[ \t]+\n", "\n", cleaned)
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+    cleaned = re.sub(r"\n(?:[ \t]*\n)+", "\n\n", cleaned)
+    return cleaned.strip()
+
+
+def clean_crawled_markdown(text, source=""):
+    cleaned = _rule_clean_markdown(text)
+    if not cleaned:
+        return ""
+
+    prompt = (
+        "Clean the Markdown formatting without changing facts.\n"
+        "Remove broken emphasis markers like stray **** or **.\n"
+        "Collapse excessive blank lines.\n"
+        "Keep headings, links, lists, dates, names, and paragraph order.\n"
+        "Return Markdown only."
+    )
+    user_prompt = f"Source: {source or 'crawler'}\n\nMarkdown:\n{cleaned[:3000]}"
+    result = chat_complete(
+        prompt,
+        user_prompt,
+        max_tokens=500,
+        temperature=0,
+    )
+    if result:
+        cleaned = _rule_clean_markdown(result)
+    return cleaned
+
+
 def save_content(titles, full_texts, doc):
     for title, full_text in zip(titles, full_texts):
+        cleaned_text = clean_crawled_markdown(full_text, source=title) or _rule_clean_markdown(full_text)
         doc.write(f"## {title}\n\n")
-        doc.write(full_text.rstrip())
+        doc.write(cleaned_text.rstrip())
         doc.write("\n\n")

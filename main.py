@@ -1,5 +1,7 @@
 import datetime
 import os
+import re
+import sys
 
 import pypandoc
 
@@ -13,7 +15,72 @@ from wanyou.crawlers_myhome import crawl_myhome
 from wanyou.crawlers_physics import crawl_physics
 from wanyou.synthesizer import build_augmented_markdown
 from wanyou.utils_auth import prompt_credentials
-from wanyou.wechat_pipeline import collect_wechat_items, write_md_stream
+from wanyou.wechat_pipeline import collect_wechat_items, write_sectioned_md_stream
+
+
+REQUIRED_SECTIONS = [
+    "教务通知",
+    "家园网信息",
+    "图书馆信息",
+    "学生会信息",
+    "青年科协信息",
+    "学生社团信息",
+    "物理系学术报告",
+    "学生公益信息",
+]
+
+STAGE_SECTION_MAP = {
+    "crawl_info": "教务通知",
+    "crawl_myhome": "家园网信息",
+}
+
+
+def _placeholder_section(section_name: str) -> str:
+    return f"# {section_name}\n\n## 占位卡片\n\n等待下次抓取结果。\n\n"
+
+
+def _error_placeholder_section(section_name: str, error_text: str) -> str:
+    return (
+        f"# {section_name}\n\n"
+        "## 占位卡片\n\n"
+        "本次抓取未成功。\n\n"
+        f"原因: {error_text}\n\n"
+    )
+
+
+def _ensure_required_sections(markdown_text: str) -> str:
+    text = markdown_text or ""
+    existing_sections = {
+        match.group(1).strip()
+        for match in re.finditer(r"^#\s+(.+?)\s*$", text, flags=re.M)
+    }
+    missing_sections = [section for section in REQUIRED_SECTIONS if section not in existing_sections]
+    if not missing_sections:
+        return text
+
+    suffix = "".join(_placeholder_section(section) for section in missing_sections)
+    if text and not text.endswith("\n"):
+        text += "\n"
+    return text + suffix
+
+
+def _append_stage_error_sections(markdown_text: str, stage_errors: dict) -> str:
+    text = markdown_text or ""
+    existing_sections = {
+        match.group(1).strip()
+        for match in re.finditer(r"^#\s+(.+?)\s*$", text, flags=re.M)
+    }
+    extra_sections = []
+    for stage_name, section_name in STAGE_SECTION_MAP.items():
+        error_text = (stage_errors.get(stage_name) or "").strip()
+        if error_text and section_name not in existing_sections:
+            extra_sections.append(_error_placeholder_section(section_name, error_text))
+            existing_sections.add(section_name)
+    if not extra_sections:
+        return text
+    if text and not text.endswith("\n"):
+        text += "\n"
+    return text + "".join(extra_sections)
 
 
 def _run_stage(stage_name: str, func, *args):
@@ -21,8 +88,16 @@ def _run_stage(stage_name: str, func, *args):
         func(*args)
         return None
     except Exception as exc:
-        print(f"{stage_name} 失败: {exc}")
-        return str(exc)
+        message = _format_error_message(exc)
+        print(f"{stage_name} 失败: {message}")
+        return message
+
+
+def _format_error_message(exc: Exception) -> str:
+    message = getattr(exc, "msg", "") or str(exc) or exc.__class__.__name__
+    message = message.split("Stacktrace:", 1)[0].strip()
+    message = re.sub(r"\s+\(Session info:.*", "", message).strip()
+    return message or exc.__class__.__name__
 
 
 def _fallback_markdown(stage_errors: dict) -> str:
@@ -39,11 +114,15 @@ def _fallback_markdown(stage_errors: dict) -> str:
         "抓取阶段记录：\n\n"
         f"{detail_block}\n\n"
         "# 教务通知\n\n## 占位卡片\n\n等待下次抓取结果。\n\n"
-        "# 学生社区\n\n## 占位卡片\n\n等待下次抓取结果。\n\n"
         "# 图书馆信息\n\n## 占位卡片\n\n等待下次抓取结果。\n\n"
+        "# 学生会信息\n\n## 占位卡片\n\n等待下次抓取结果。\n\n"
+        "# 青年科协信息\n\n## 占位卡片\n\n等待下次抓取结果。\n\n"
+        "# 学生社团信息\n\n## 占位卡片\n\n等待下次抓取结果。\n\n"
+        "# 家园网信息\n\n## 占位卡片\n\n等待下次抓取结果。\n\n"
         "# 新清华学堂\n\n## 占位卡片\n\n等待下次抓取结果。\n\n"
         "# 物理系学术报告\n\n## 占位卡片\n\n等待下次抓取结果。\n\n"
-        "# 公众号信息\n\n## 占位卡片\n\n等待下次抓取结果。\n"
+        "# 学生公益信息\n\n## 占位卡片\n\n等待下次抓取结果。\n\n"
+        "# 其他公众号信息\n\n## 占位卡片\n\n等待下次抓取结果。\n"
     )
 
 
@@ -66,6 +145,10 @@ def run_pipeline(
     *,
     username: str = "",
     password: str = "",
+    info_username: str = "",
+    info_password: str = "",
+    myhome_username: str = "",
+    myhome_password: str = "",
     public_only: bool = False,
     include_wechat: bool = True,
     synthesize: bool = True,
@@ -89,15 +172,48 @@ def run_pipeline(
     if config.LLM_LOG_PATH:
         config.LLM_LOG_PATH = os.path.join(run_dir, "llm_decisions.jsonl")
 
-    if not public_only and (not username or not password):
-        username, password = prompt_credentials()
+    credentials = {
+        "info": {
+            "username": info_username or username,
+            "password": info_password or password,
+        },
+        "myhome": {
+            "username": myhome_username or username,
+            "password": myhome_password or password,
+        },
+    }
+
+    if not public_only and (
+        not credentials["info"]["username"]
+        or not credentials["info"]["password"]
+        or not credentials["myhome"]["username"]
+        or not credentials["myhome"]["password"]
+    ):
+        prompted = prompt_credentials()
+        for site_name in ("info", "myhome"):
+            credentials[site_name]["username"] = credentials[site_name]["username"] or prompted[site_name]["username"]
+            credentials[site_name]["password"] = credentials[site_name]["password"] or prompted[site_name]["password"]
 
     stage_errors = {}
 
     with open(raw_markdown_path, "w", encoding="utf-8") as doc:
         if not public_only:
-            stage_errors["crawl_info"] = _run_stage("crawl_info", crawl_info, doc, base_images_dir, username, password)
-            stage_errors["crawl_myhome"] = _run_stage("crawl_myhome", crawl_myhome, doc, base_images_dir, username, password)
+            stage_errors["crawl_info"] = _run_stage(
+                "crawl_info",
+                crawl_info,
+                doc,
+                base_images_dir,
+                credentials["info"]["username"],
+                credentials["info"]["password"],
+            )
+            stage_errors["crawl_myhome"] = _run_stage(
+                "crawl_myhome",
+                crawl_myhome,
+                doc,
+                base_images_dir,
+                credentials["myhome"]["username"],
+                credentials["myhome"]["password"],
+            )
         stage_errors["crawl_lib"] = _run_stage("crawl_lib", crawl_lib, doc, base_images_dir)
         stage_errors["crawl_hall"] = _run_stage("crawl_hall", crawl_hall, doc, filename_jpg, base_images_dir)
         stage_errors["crawl_physics"] = _run_stage("crawl_physics", crawl_physics, doc, base_images_dir)
@@ -107,21 +223,22 @@ def run_pipeline(
             try:
                 items = collect_wechat_items(days_limit=recent_days)
                 if items:
-                    write_md_stream(
+                    write_sectioned_md_stream(
                         items,
                         doc,
-                        include_content=getattr(config, "WECHAT_FETCH_CONTENT", True),
-                        header=f"# 公众号信息（最近 {recent_days} 天）",
+                        include_content=False,
                     )
             except Exception as exc:
-                print(f"公众号抓取失败: {exc}")
+                print(f"公众号抓取失败: {_format_error_message(exc)}")
 
     with open(raw_markdown_path, "r", encoding="utf-8") as f:
         raw_markdown = f.read()
     if not raw_markdown.strip():
         raw_markdown = _fallback_markdown(stage_errors)
-        with open(raw_markdown_path, "w", encoding="utf-8") as f:
-            f.write(raw_markdown)
+    raw_markdown = _append_stage_error_sections(raw_markdown, stage_errors)
+    raw_markdown = _ensure_required_sections(raw_markdown)
+    with open(raw_markdown_path, "w", encoding="utf-8") as f:
+        f.write(raw_markdown)
 
     final_markdown = build_augmented_markdown(raw_markdown) if synthesize else raw_markdown
     with open(final_markdown_path, "w", encoding="utf-8") as f:
@@ -166,6 +283,10 @@ def run_pipeline(
 
 
 def main():
+    for stream_name in ("stdout", "stderr"):
+        stream = getattr(sys, stream_name, None)
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="replace")
     run_pipeline()
 
 

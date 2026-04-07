@@ -1,11 +1,14 @@
 import datetime
 import json
 import os
+import re
 
 import config
 from wanyou.decider import apply_keyword_rules, should_copy_with_llm
 from wanyou.wechat_client import create_api_session, dedupe_items, fetch_articles, resolve_fakeids
 from wanyou.wechat_content import enrich_items_with_content
+from wanyou.utils_html import clean_crawled_markdown
+from wanyou.utils_llm import chat_complete
 
 
 def format_datetime_text(item):
@@ -78,6 +81,52 @@ def _filter_recent_days(items, days_limit):
     return filtered
 
 
+def _fallback_wechat_summary(item):
+    for candidate in (
+        item.get("digest") or "",
+        item.get("content") or "",
+    ):
+        cleaned = clean_crawled_markdown(candidate, source=item.get("title", "wechat"))
+        if cleaned:
+            cleaned = re.sub(r"\s+", " ", cleaned).strip()
+            return cleaned[: getattr(config, "LLM_SUMMARY_MAX_CHARS", 100)]
+    return ""
+
+
+def summarize_wechat_item(item):
+    title = (item.get("title") or "").strip()
+    digest = clean_crawled_markdown(item.get("digest") or "", source=title)
+    content = clean_crawled_markdown(item.get("content") or "", source=title)
+    snippet = "\n".join(part for part in [digest, content] if part).strip()
+    if not snippet:
+        return ""
+
+    system_prompt = (
+        "You are editing a concise campus briefing.\n"
+        "Summarize the article in simplified Chinese within 90 characters.\n"
+        "Keep only the most useful student-facing information such as theme, time, place, registration, deadline, or audience.\n"
+        "Do not copy long original paragraphs.\n"
+        "Return summary text only."
+    )
+    user_prompt = (
+        f"标题: {title}\n"
+        f"日期: {format_datetime_text(item)}\n"
+        f"来源公众号: {(item.get('account_keyword') or '').strip()}\n"
+        f"内容:\n{snippet[:2500]}"
+    )
+    result = chat_complete(
+        system_prompt,
+        user_prompt,
+        max_tokens=160,
+        temperature=0.2,
+    )
+    if result:
+        cleaned = re.sub(r"\s+", " ", result).strip()
+        if cleaned:
+            return cleaned[: getattr(config, "LLM_SUMMARY_MAX_CHARS", 100)]
+    return _fallback_wechat_summary(item)
+
+
 def collect_wechat_items(days_limit=None):
     timeout = getattr(config, "WECHAT_REQUEST_TIMEOUT", 15)
     sleep_seconds = getattr(config, "WECHAT_SLEEP_SECONDS", 1)
@@ -105,16 +154,19 @@ def collect_wechat_items(days_limit=None):
         items = items[:max_articles]
 
     enrich_items_with_content(session, items, timeout, sleep_seconds)
+    for item in items:
+        item["content"] = clean_crawled_markdown(item.get("content") or "", source=item.get("title", "wechat"))
+        item["summary"] = summarize_wechat_item(item)
     mark_items_for_md(items)
     return items
 
 
-def write_md(items, output_path, include_content=True, header="# 公众号公开历史文章"):
+def write_md(items, output_path, include_content=True, header="# 其他公众号公开历史文章"):
     with open(output_path, "w", encoding="utf-8") as f:
         write_md_stream(items, f, include_content=include_content, header=header)
 
 
-def write_md_stream(items, stream, include_content=True, header="# 公众号公开历史文章"):
+def write_md_stream(items, stream, include_content=True, header="# 其他公众号公开历史文章"):
     stream.write(f"{header}\n\n")
     for item in items:
         if not item.get("include_in_md", True):
@@ -137,7 +189,10 @@ def write_md_stream(items, stream, include_content=True, header="# 公众号公�
             stream.write(f"发布时间: {publish_time}\n\n")
         if author:
             stream.write(f"作者: {author}\n\n")
-        if digest:
+        summary = (item.get("summary") or "").strip()
+        if summary:
+            stream.write(f"摘要: {summary}\n\n")
+        elif digest:
             stream.write(f"摘要: {digest}\n\n")
 
         if include_content:
@@ -148,6 +203,66 @@ def write_md_stream(items, stream, include_content=True, header="# 公众号公�
                 if not content.endswith("\n"):
                     stream.write("\n")
                 stream.write("\n")
+
+
+WECHAT_SECTION_ORDER = [
+    "学生会信息",
+    "青年科协信息",
+    "学生社团信息",
+    "学生公益信息",
+    "其他公众号信息",
+]
+
+
+def _wechat_section_for_item(item):
+    account_keyword = (item.get("account_keyword") or "").strip()
+    title = (item.get("title") or "").strip()
+    digest = (item.get("digest") or "").strip()
+    content = (item.get("content") or "").strip()
+    text = "\n".join([account_keyword, title, digest, content]).lower()
+
+    welfare_keywords = [
+        "公益", "志愿", "志愿者", "支教", "捐赠", "义卖", "献血", "助残", "环保", "募捐", "慈善",
+    ]
+    club_keywords = [
+        "社团", "协会", "俱乐部", "招新", "百团", "工作坊", "学生组织", "兴趣小组",
+    ]
+
+    if any(keyword in text for keyword in welfare_keywords):
+        return "学生公益信息"
+    if "学生会" in account_keyword or "学生会" in title:
+        return "学生会信息"
+    if any(keyword in account_keyword for keyword in ["青年科创", "青年科协"]) or any(
+        keyword in text for keyword in ["科协", "科创", "青科", "创新", "创业"]
+    ):
+        return "青年科协信息"
+    if any(keyword in text for keyword in club_keywords):
+        return "学生社团信息"
+    return "其他公众号信息"
+
+
+def split_wechat_items_by_section(items):
+    buckets = {section: [] for section in WECHAT_SECTION_ORDER}
+    for item in items:
+        if not item.get("include_in_md", True):
+            continue
+        section = _wechat_section_for_item(item)
+        buckets.setdefault(section, []).append(item)
+    return buckets
+
+
+def write_sectioned_md_stream(items, stream, include_content=True):
+    buckets = split_wechat_items_by_section(items)
+    for section in WECHAT_SECTION_ORDER:
+        section_items = buckets.get(section) or []
+        if not section_items:
+            continue
+        write_md_stream(
+            section_items,
+            stream,
+            include_content=False,
+            header=f"# {section}",
+        )
 
 
 def write_json(items, output_path):
@@ -165,5 +280,5 @@ def run_wechat_public_output(days_limit=None):
         write_json(items, output_path)
     else:
         output_path = f"{output_base}.md"
-        write_md(items, output_path, include_content=getattr(config, "WECHAT_FETCH_CONTENT", True))
+        write_md(items, output_path, include_content=False)
     return output_path, items

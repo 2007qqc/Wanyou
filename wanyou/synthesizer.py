@@ -8,7 +8,7 @@ from wanyou.utils_llm import chat_complete
 def summarize_item(title: str, content: str, source: str = "", date: str = "") -> str:
     structured_summary = _structured_summary(content, source=source)
     if not getattr(config, "LLM_SUMMARY_ENABLED", False):
-        return _finalize_summary(structured_summary or _fallback_summary(content))
+        return _finalize_summary(structured_summary or _fallback_summary(content), content)
 
     prompt = f"标题: {title}\n来源: {source}\n日期: {date}\n正文:\n{content[:2000]}"
     result = chat_complete(
@@ -18,14 +18,14 @@ def summarize_item(title: str, content: str, source: str = "", date: str = "") -
         temperature=0.3,
     )
     if not result:
-        return _finalize_summary(structured_summary or _fallback_summary(content))
-    return _finalize_summary(result.strip()[: config.LLM_SUMMARY_MAX_CHARS])
+        return _finalize_summary(structured_summary or _fallback_summary(content), content)
+    return _finalize_summary(result.strip()[: config.LLM_SUMMARY_MAX_CHARS], content)
 
 
-def generate_transition(section_name: str, summaries: Iterable[str]) -> str:
+def generate_transition(section_name: str, summaries: Iterable[str], has_items: bool = False) -> str:
     summary_list = [item.strip() for item in summaries if item and item.strip()]
     if not getattr(config, "LLM_TRANSITION_ENABLED", False):
-        return _fallback_transition(section_name, bool(summary_list))
+        return _fallback_transition(section_name, has_items)
 
     if not summary_list:
         prompt = f"栏目: {section_name}\n本周没有内容。"
@@ -40,7 +40,7 @@ def generate_transition(section_name: str, summaries: Iterable[str]) -> str:
         temperature=0.4,
     )
     if not result:
-        return _fallback_transition(section_name, bool(summary_list))
+        return _fallback_transition(section_name, has_items)
     return result.strip()
 
 
@@ -110,6 +110,7 @@ def build_augmented_markdown(markdown_text: str) -> str:
         transition = generate_transition(
             section["title"],
             [item.get("summary", "") for item in enriched],
+            has_items=bool(enriched),
         )
 
         parts = [f"# {section['title']}", "", transition, ""]
@@ -183,10 +184,11 @@ def _clip_summary(text: str) -> str:
     return compact[: config.LLM_SUMMARY_MAX_CHARS]
 
 
-def _finalize_summary(summary: str) -> str:
+def _finalize_summary(summary: str, content: str = "") -> str:
     cleaned_summary = _clip_summary(summary)
     if cleaned_summary and _looks_like_complete_summary(cleaned_summary):
-        return cleaned_summary
+        if not _is_summary_redundant(cleaned_summary, content):
+            return cleaned_summary
     return ""
 
 
@@ -250,6 +252,54 @@ def _looks_like_complete_summary(text: str) -> bool:
     latin_words = len(re.findall(r"[A-Za-z]{4,}", compact))
     has_sentence_shape = bool(re.search(r"[。！？；]", compact)) or chinese_chars >= 20 or latin_words >= 8
     return has_sentence_shape
+
+
+def _is_summary_redundant(summary: str, content: str) -> bool:
+    summary_norm = _normalize_compare_text(summary)
+    if not summary_norm:
+        return True
+
+    paragraphs = _extract_candidate_paragraphs(content or "")
+    if not paragraphs:
+        return False
+
+    for paragraph in paragraphs[:3]:
+        paragraph_norm = _normalize_compare_text(paragraph)
+        if not paragraph_norm:
+            continue
+        if summary_norm == paragraph_norm:
+            return True
+        if summary_norm in paragraph_norm or paragraph_norm in summary_norm:
+            return True
+        if _token_overlap_ratio(summary_norm, paragraph_norm) >= 0.88:
+            return True
+
+    return False
+
+
+def _normalize_compare_text(text: str) -> str:
+    cleaned = _clean_summary_text(text)
+    cleaned = re.sub(r"[，。！？；、：:（）()\[\]“”\"'《》<>·\-—_/\\]", "", cleaned)
+    cleaned = re.sub(r"\s+", "", cleaned)
+    return cleaned.strip().lower()
+
+
+def _token_overlap_ratio(left: str, right: str) -> float:
+    if not left or not right:
+        return 0.0
+    left_tokens = _compare_tokens(left)
+    right_tokens = _compare_tokens(right)
+    if not left_tokens or not right_tokens:
+        return 0.0
+    overlap = len(left_tokens & right_tokens)
+    base = min(len(left_tokens), len(right_tokens))
+    return overlap / base if base else 0.0
+
+
+def _compare_tokens(text: str) -> set[str]:
+    cjk_bigrams = {text[i : i + 2] for i in range(len(text) - 1)} if len(text) > 1 else {text}
+    latin_words = set(re.findall(r"[a-z0-9]{3,}", text))
+    return {token for token in cjk_bigrams | latin_words if token}
 
 
 def _strip_leading_metadata(text: str) -> str:
