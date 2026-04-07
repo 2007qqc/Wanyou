@@ -8,7 +8,7 @@ import config
 from wanyou.utils_dates import days_since_date, is_after_next_monday
 from wanyou.utils_web import make_browser, build_requests_session
 from wanyou.utils_html import html_to_markdown, save_content
-from wanyou.decider import should_copy_with_llm
+from wanyou.decider import resolve_copy_decision
 
 
 def extract_content(text):
@@ -56,9 +56,7 @@ def crawl_lib(doc, base_images_dir):
                 continue
 
             if all((not(sub in title)) for sub in config.LIB_NO_CONSIDER):
-                decision = should_copy_with_llm("lib_notice", title, date)
-                if decision is None:
-                    decision = input('是否拷贝"'+title+'"的信息 (y/n, default y)\n') != "n"
+                decision = resolve_copy_decision("lib_notice", title, date)
                 if decision:
                     container = WebDriverWait(browser, config.WAIT_TIMEOUT).until(
                         EC.presence_of_element_located((By.CLASS_NAME, "concon")))
@@ -134,9 +132,7 @@ def crawl_lib(doc, base_images_dir):
                     browser.back()
                     continue
 
-                decision = should_copy_with_llm("lib_event", title, date)
-                if decision is None:
-                    decision = input('是否拷贝"'+title+'"的信息 (y/n, default y)\n') != "n"
+                decision = resolve_copy_decision("lib_event", title, date)
                 if decision:
                     container = WebDriverWait(browser, config.WAIT_TIMEOUT).until(
                         EC.presence_of_element_located((By.CSS_SELECTOR, "div.material-value.editor-width")))

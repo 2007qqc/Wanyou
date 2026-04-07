@@ -9,7 +9,7 @@ import config
 from wanyou.utils_dates import days_since_date
 from wanyou.utils_web import make_browser, build_requests_session, open_in_new_tab
 from wanyou.utils_html import html_to_markdown, save_content
-from wanyou.decider import should_copy_with_llm
+from wanyou.decider import resolve_copy_decision
 
 
 def crawl_info(doc, base_images_dir, username, password):
@@ -60,9 +60,7 @@ def crawl_info(doc, base_images_dir, username, password):
                     break
 
                 title = browser.find_element(By.CLASS_NAME, "title").text
-                decision = should_copy_with_llm("info", title, date)
-                if decision is None:
-                    decision = input('是否拷贝"'+title+'"的信息 (y/n, default y)\n') != "n"
+                decision = resolve_copy_decision("info", title, date)
                 if decision:
                     container = WebDriverWait(browser, config.WAIT_TIMEOUT).until(
                         EC.presence_of_element_located((By.CLASS_NAME, "xiangqingchakan")))

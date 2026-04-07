@@ -7,12 +7,14 @@
 # Selenium 选项
 HEADLESS = True
 PAGE_LOAD_TIMEOUT = 30
+PAGE_LOAD_STRATEGY = "eager"
 WAIT_TIMEOUT = 15
 SLEEP_SECONDS = 3
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/70.0.3538.25 Safari/537.36"
 )
+SELENIUM_CACHE_DIR = "./output/selenium_cache"
 
 # 日期/时间窗口
 DAYS_WINDOW_INFO = 300
@@ -38,6 +40,7 @@ URL_HALL_PAGES = [
     "https://www.hall.tsinghua.edu.cn/columnEx/pwzx_hdap/yc-dy-px-zl-jz/2",
 ]
 PHYSICS_REPORT_LIST_PAGES = [
+    "https://www.phys.tsinghua.edu.cn/xwyhd/xshd.htm",
     "https://www.phys.tsinghua.edu.cn/kxyj/xsbg.htm",
 ]
 
@@ -119,13 +122,15 @@ WECHAT_FILTER_CONTENT_MAX_CHARS = 3000
 WECHAT_FILTER_FALLBACK_KEEP = True
 
 # LLM 自动决策（yes/no）
-LLM_ENABLED = False
-LLM_PROVIDER = "zhipuai"  # "zhipuai", "openai", "chatgpt", "deepseek", "gemini"
-LLM_MODEL = "glm-4.7"
+LLM_ENABLED = True
+LLM_PROVIDER = "deepseek"  # "zhipuai", "openai", "chatgpt", "deepseek", "gemini"
+LLM_MODEL = "deepseek-chat"
 LLM_API_KEY_ENV = ""
 LLM_BASE_URL = ""
 LLM_TIMEOUT_SECONDS = 20
 LLM_LOG_PATH = "llm_decisions.jsonl"
+INTERACTIVE_REVIEW = False
+DEFAULT_COPY_WHEN_UNDECIDED = True
 OPENAI_API_KEY_ENV = "OPENAI_API_KEY"
 OPENAI_BASE_URL = "https://api.openai.com/v1"
 DEEPSEEK_API_KEY_ENV = "DEEPSEEK_API_KEY"

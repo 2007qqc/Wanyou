@@ -5,7 +5,7 @@ import html2text
 from selenium.webdriver.common.by import By
 
 import config
-from wanyou.decider import should_copy_with_llm
+from wanyou.decider import resolve_copy_decision
 from wanyou.utils_dates import days_since_date
 from wanyou.utils_html import save_content
 from wanyou.utils_web import build_requests_session, make_browser
@@ -54,7 +54,7 @@ def crawl_physics(doc, _base_images_dir):
             links = browser.find_elements(By.TAG_NAME, "a")
 
             for link in links:
-                title = (link.text or "").strip()
+                title = ((link.text or "").strip() or (link.get_attribute("title") or "").strip())
                 href = (link.get_attribute("href") or "").strip()
                 if not href or href in seen_urls or not _looks_like_report(title):
                     continue
@@ -84,10 +84,8 @@ def crawl_physics(doc, _base_images_dir):
                     for keyword in config.PHYSICS_REPORT_LOCATION_KEYWORDS
                     if keyword
                 )
-                decision = should_copy_with_llm("physics", title, date, content_text[:500])
-                if decision is False:
-                    continue
-                if decision is None and not location_hit and not _looks_like_report(content_text[:200]):
+                decision = resolve_copy_decision("physics", title, date, content_text[:500])
+                if not decision and not location_hit and not _looks_like_report(content_text[:200]):
                     continue
 
                 body = []

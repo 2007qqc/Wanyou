@@ -1,0 +1,3 @@
+﻿interface:
+  display_name: "Wanyou Richtext Export"
+  short_description: "Generate H5, payload, and optional DOCX outputs"

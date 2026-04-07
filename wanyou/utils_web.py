@@ -1,3 +1,5 @@
+import os
+
 import requests
 from selenium import webdriver
 from selenium.webdriver.edge.options import Options
@@ -6,9 +8,15 @@ import config
 
 
 def make_browser():
+    os.makedirs(config.SELENIUM_CACHE_DIR, exist_ok=True)
+    os.environ.setdefault("SE_CACHE_PATH", os.path.abspath(config.SELENIUM_CACHE_DIR))
     options = Options()
+    options.page_load_strategy = getattr(config, "PAGE_LOAD_STRATEGY", "eager")
     if config.HEADLESS:
         options.add_argument("--headless=new")
+    options.add_argument("--ignore-certificate-errors")
+    options.add_argument("--allow-insecure-localhost")
+    options.add_argument("--disable-gpu")
     browser = webdriver.Edge(options=options)
     if config.PAGE_LOAD_TIMEOUT:
         browser.set_page_load_timeout(config.PAGE_LOAD_TIMEOUT)
