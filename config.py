@@ -109,6 +109,7 @@ WECHAT_OCR_SPACE_IS_TABLE = False
 WECHAT_OCR_SPACE_ENGINE = 1
 WECHAT_OCR_MAX_IMAGES_PER_ARTICLE = 0
 WECHAT_IMAGE_LLM_ENABLED = True
+WECHAT_IMAGE_LLM_PROVIDER = ""
 WECHAT_IMAGE_LLM_BASE_URL = ""
 WECHAT_IMAGE_LLM_MODEL = ""
 WECHAT_IMAGE_LLM_API_KEY_ENV = ""
@@ -119,12 +120,20 @@ WECHAT_FILTER_FALLBACK_KEEP = True
 
 # LLM 自动决策（yes/no）
 LLM_ENABLED = False
-LLM_PROVIDER = "zhipuai"  # "openai" or "zhipuai"
+LLM_PROVIDER = "zhipuai"  # "zhipuai", "openai", "chatgpt", "deepseek", "gemini"
 LLM_MODEL = "glm-4.7"
-LLM_API_KEY_ENV = "ZHIPUAI_API_KEY"
-LLM_BASE_URL = "https://open.bigmodel.cn"
+LLM_API_KEY_ENV = ""
+LLM_BASE_URL = ""
 LLM_TIMEOUT_SECONDS = 20
 LLM_LOG_PATH = "llm_decisions.jsonl"
+OPENAI_API_KEY_ENV = "OPENAI_API_KEY"
+OPENAI_BASE_URL = "https://api.openai.com/v1"
+DEEPSEEK_API_KEY_ENV = "DEEPSEEK_API_KEY"
+DEEPSEEK_BASE_URL = "https://api.deepseek.com/v1"
+GEMINI_API_KEY_ENV = "GEMINI_API_KEY"
+GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
+ZHIPUAI_API_KEY_ENV = "ZHIPUAI_API_KEY"
+ZHIPUAI_BASE_URL = "https://open.bigmodel.cn/api/paas/v4"
 LLM_FORCE_YES_KEYWORDS = [
     "开题",
     "注册",
