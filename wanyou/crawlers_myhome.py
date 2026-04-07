@@ -75,8 +75,8 @@ def crawl_myhome(doc, base_images_dir, username, password):
                 browser.close()
                 browser.switch_to.window(web)
 
-        except Exception as e:
-            print(f"处理区块时出错：{str(e)}")
+        except Exception:
+            continue
 
     browser.quit()
     doc.write("# 家园网信息\n\n")

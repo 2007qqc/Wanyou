@@ -120,9 +120,6 @@ def classify_image_type_with_llm(image_url):
         temperature=0,
     )
     text = (text or "").upper()
-    if text:
-        print(f"正在分类图片：{image_url}，响应文本：{text}")
-
     if text.startswith("TABLE"):
         return "TABLE"
     if text.startswith("QRCODE"):
@@ -258,5 +255,3 @@ def enrich_items_with_content(session, items, timeout, sleep_seconds):
             item["content_error"] = str(exc)
         if sleep_seconds:
             time.sleep(sleep_seconds)
-        if idx % 10 == 0:
-            print(f"已抓取正文 {idx}/{len(items)}")

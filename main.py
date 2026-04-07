@@ -19,7 +19,6 @@ from wanyou.wechat_pipeline import collect_wechat_items, write_md_stream
 def _run_stage(stage_name: str, func, *args):
     try:
         func(*args)
-        print(f"{stage_name} 完成")
         return None
     except Exception as exc:
         print(f"{stage_name} 失败: {exc}")
@@ -147,13 +146,14 @@ def run_pipeline(
     else:
         agent_payload_path = ""
 
-    print(f"Markdown 已保存至: {final_markdown_path}")
+    outputs = [f"Markdown: {final_markdown_path}"]
     if docx_path:
-        print(f"DOCX 已保存至: {docx_path}")
+        outputs.append(f"DOCX: {docx_path}")
     if html_path:
-        print(f"H5 已保存至: {html_path}")
+        outputs.append(f"H5: {html_path}")
     if agent_payload_path:
-        print(f"Agent payload 已保存至: {agent_payload_path}")
+        outputs.append(f"Agent payload: {agent_payload_path}")
+    print(" | ".join(outputs))
 
     return {
         "run_dir": run_dir,

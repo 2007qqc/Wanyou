@@ -77,8 +77,6 @@ def create_api_session():
     key_env = getattr(config, "WECHAT_PUBLIC_API_KEY_ENV", "WECHAT_PUBLIC_API_KEY")
     api_key = os.environ.get(key_env, "").strip()
     session.headers["X-Auth-Key"] = api_key
-    if not api_key:
-        print(f"未设置 {key_env}，将按空 X-Auth-Key 请求。")
     return session
 
 

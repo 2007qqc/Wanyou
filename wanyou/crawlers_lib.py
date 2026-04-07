@@ -75,8 +75,8 @@ def crawl_lib(doc, base_images_dir):
 
             browser.back()
 
-        except Exception as e:
-            print(f"处理区块时出错：{str(e)}")
+        except Exception:
+            continue
 
     browser.quit()
 
@@ -166,8 +166,8 @@ def crawl_lib(doc, base_images_dir):
 
                 browser.back()
 
-        except Exception as e:
-            print(f"处理区块时出错：{str(e)}")
+        except Exception:
+            continue
 
     browser.quit()
     doc.write("# 图书馆信息\n\n")
