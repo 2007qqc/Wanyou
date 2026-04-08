@@ -7,7 +7,7 @@ import pypandoc
 
 import config
 from generators.browser_agent import export_browser_agent_payload
-from generators.h5_generator import export_h5
+from generators.h5_generator import decorate_markdown_with_theme, export_h5
 from wanyou.crawlers_hall import crawl_hall
 from wanyou.crawlers_info import crawl_info
 from wanyou.crawlers_lib import crawl_lib
@@ -276,7 +276,8 @@ def run_pipeline(
     with open(raw_markdown_path, "w", encoding="utf-8") as f:
         f.write(raw_markdown)
 
-    final_markdown = build_augmented_markdown(raw_markdown) if synthesize else raw_markdown
+    final_markdown = build_augmented_markdown(raw_markdown, current_markdown_path=raw_markdown_path) if synthesize else raw_markdown
+    final_markdown = decorate_markdown_with_theme(final_markdown, final_markdown_path)
     with open(final_markdown_path, "w", encoding="utf-8") as f:
         f.write(final_markdown)
 

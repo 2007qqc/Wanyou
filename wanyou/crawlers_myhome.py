@@ -10,7 +10,7 @@ from selenium.webdriver.support.ui import WebDriverWait
 import config
 from wanyou.decider import resolve_copy_decision
 from wanyou.unified_auth import authenticate_shared_browser
-from wanyou.utils_dates import days_since_date
+from wanyou.utils_issue_filter import current_issue_cutoff, load_previous_titles, seen_in_previous_issue, should_skip_by_time
 from wanyou.utils_html import html_to_markdown, save_content
 from wanyou.utils_ocr import convert_markdown_images_to_text
 from wanyou.utils_web import build_requests_session, dump_browser_snapshot, open_in_new_tab
@@ -58,6 +58,25 @@ def _find_notice_links(browser):
             return usable
     return []
 
+
+
+
+def _extract_list_date(link):
+    candidates = []
+    try:
+        candidates.append((link.text or "").strip())
+    except Exception:
+        pass
+    try:
+        parent = link.find_element(By.XPATH, './ancestor::tr[1]')
+        candidates.append((parent.text or "").strip())
+    except Exception:
+        pass
+    for text in candidates:
+        match = re.search(r"(20\d{2})\D(\d{1,2})\D(\d{1,2})", text)
+        if match:
+            return f"{match.group(1)}-{match.group(2).zfill(2)}-{match.group(3).zfill(2)}"
+    return ""
 
 def _extract_detail_date(browser):
     selectors = [
@@ -119,6 +138,8 @@ def crawl_myhome(doc, base_images_dir, username="", password="", browser=None):
             dump_browser_snapshot(browser, debug_dir, "myhome_no_notice_links")
             raise RuntimeError("家园网页未发现通知入口，可能是登录未生效或页面结构已变更")
 
+        cutoff = current_issue_cutoff()
+        previous_titles = load_previous_titles()
         seen_urls = set()
         web = browser.window_handles[0]
         time.sleep(1)
@@ -131,17 +152,27 @@ def crawl_myhome(doc, base_images_dir, username="", password="", browser=None):
         for link in notice_links:
             try:
                 url = (link.get_attribute("href") or "").strip()
+                list_title = (link.text or "").strip()
+                list_date = _extract_list_date(link)
                 if not url or url in seen_urls:
+                    continue
+                if list_title and seen_in_previous_issue(list_title, previous_titles):
+                    continue
+                if list_date and should_skip_by_time(list_date, cutoff):
                     continue
 
                 seen_urls, browser = open_in_new_tab(url, seen_urls, browser, web)
                 date = _extract_detail_date(browser)
-                if days_since_date(date) > config.DAYS_WINDOW_MYHOME:
+                if should_skip_by_time(date, cutoff):
                     browser.close()
                     browser.switch_to.window(web)
                     continue
 
                 title = _extract_detail_title(browser)
+                if seen_in_previous_issue(title, previous_titles):
+                    browser.close()
+                    browser.switch_to.window(web)
+                    continue
                 if any(sub in title for sub in config.MYHOME_NO_CONSIDER):
                     browser.close()
                     browser.switch_to.window(web)

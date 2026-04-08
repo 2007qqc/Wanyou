@@ -233,11 +233,12 @@ def chat_complete(
     timeout_seconds: Optional[int] = None,
     max_tokens: int = 200,
     temperature: float = 0,
+    task_label: str = "\u004c\u004c\u004d\u4efb\u52a1",
 ) -> Optional[str]:
     if not config.LLM_ENABLED:
         return None
 
-    print("等待LLM输出中")
+    print(f"\u7b49\u5f85LLM\u8f93\u51fa\u4e2d\uff1a{task_label}")
 
     provider_name = _normalize_provider(provider)
     model_name = model or config.LLM_MODEL
@@ -390,5 +391,6 @@ def llm_decide_yes_no(context: str) -> Optional[bool]:
         context,
         max_tokens=5,
         temperature=0,
+        task_label="\u6b63\u5728\u5224\u65ad\u6761\u76ee\u662f\u5426\u4fdd\u7559",
     )
     return _parse_decision(content or "")

@@ -11,7 +11,7 @@ from selenium.webdriver.support.ui import WebDriverWait
 import config
 from wanyou.decider import resolve_copy_decision
 from wanyou.unified_auth import authenticate_shared_browser
-from wanyou.utils_dates import days_since_date
+from wanyou.utils_issue_filter import current_issue_cutoff, load_previous_titles, seen_in_previous_issue, should_skip_by_time
 from wanyou.utils_html import html_to_markdown, save_content
 from wanyou.utils_llm import chat_complete
 from wanyou.utils_web import build_requests_session, dump_browser_snapshot, open_in_new_tab
@@ -81,6 +81,18 @@ def _extract_block_link(block):
             continue
     raise NoSuchElementException("notice block has no usable link")
 
+
+
+
+def _extract_list_date(text: str) -> str:
+    raw = (text or "").strip()
+    match = re.search(
+        r"(20\d{2}[\u5e74\-/.]\d{1,2}[\u6708\-/.]\d{1,2}(?:\u65e5)?(?:\s+\d{1,2}[:\uff1a]\d{2})?)",
+        raw,
+    )
+    if match:
+        return match.group(1)
+    return ""
 
 def _extract_detail_date(browser):
     selectors = [
@@ -224,7 +236,13 @@ def _write_info_llm_hint(debug_dir, browser, session):
         "Only output JSON."
     )
     user_prompt = f"HTML:\n{page_html}\n\nJS:\n{chr(10).join(interesting_scripts)[:9000]}"
-    result = chat_complete(prompt, user_prompt, max_tokens=300, temperature=0)
+    result = chat_complete(
+        prompt,
+        user_prompt,
+        max_tokens=300,
+        temperature=0,
+        task_label="\u6b63\u5728\u5206\u6790\u6559\u52a1\u9875\u9762\u7ed3\u6784",
+    )
     if not result:
         return
     os.makedirs(debug_dir, exist_ok=True)
@@ -233,6 +251,8 @@ def _write_info_llm_hint(debug_dir, browser, session):
 
 
 def _collect_info_items(browser, session, base_images_dir, title_filter=None):
+    cutoff = current_issue_cutoff()
+    previous_titles = load_previous_titles()
     seen_urls = set()
     web = browser.window_handles[0]
     titles = []
@@ -248,21 +268,31 @@ def _collect_info_items(browser, session, base_images_dir, title_filter=None):
                 up = False
             except NoSuchElementException:
                 up = True
-            _, url = _extract_block_link(block)
+            link_node, url = _extract_block_link(block)
+            list_title = ((link_node.text or "").strip() or (block.text or "").strip().splitlines()[0].strip())
+            list_date = _extract_list_date(block.text or "")
 
             if url in seen_urls:
+                continue
+            if list_title and seen_in_previous_issue(list_title, previous_titles):
+                continue
+            if list_date and should_skip_by_time(list_date, cutoff):
                 continue
 
             seen_urls, browser = open_in_new_tab(url, seen_urls, browser, web)
             time.sleep(2)
             date = _extract_detail_date(browser)
 
-            if (days_since_date(date) > config.DAYS_WINDOW_INFO) and up:
+            if should_skip_by_time(date, cutoff) and up:
                 browser.close()
                 browser.switch_to.window(web)
                 continue
 
             title = _extract_detail_title(browser)
+            if seen_in_previous_issue(title, previous_titles):
+                browser.close()
+                browser.switch_to.window(web)
+                continue
             if title_filter and not title_filter(title):
                 browser.close()
                 browser.switch_to.window(web)

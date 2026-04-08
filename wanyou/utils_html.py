@@ -1,4 +1,4 @@
-import html as html_lib
+﻿import html as html_lib
 import os
 import re
 from urllib.parse import urljoin, urlparse
@@ -6,6 +6,9 @@ from urllib.parse import urljoin, urlparse
 import html2text
 import config
 from wanyou.utils_llm import chat_complete
+
+
+BLOCK_TAGS = ("p", "div", "section", "article", "li", "ul", "ol", "table", "tr", "td", "th", "h1", "h2", "h3", "h4", "h5", "h6", "br")
 
 
 def normalize_resource_urls(html_text, base_url):
@@ -24,6 +27,7 @@ def normalize_resource_urls(html_text, base_url):
         return f'src="{src}"'
 
     return re.sub(r'src="([^"]+)"', repl, html_text)
+
 
 
 def download_images_and_rewrite(html_text, base_url, session, images_dir, image_counter, image_prefix, referer):
@@ -76,10 +80,12 @@ def download_images_and_rewrite(html_text, base_url, session, images_dir, image_
     return re.sub(r'src="([^"]+)"', repl, html_text)
 
 
+
 def normalize_table_html(table_html):
     lines = [line.lstrip() for line in table_html.splitlines()]
     normalized = "\n".join(lines).strip()
     return normalized
+
 
 
 def strip_html_tags(text):
@@ -87,6 +93,7 @@ def strip_html_tags(text):
     text = html_lib.unescape(text)
     text = re.sub(r"\s+", " ", text).strip()
     return text
+
 
 
 def table_html_to_markdown(table_html):
@@ -105,8 +112,7 @@ def table_html_to_markdown(table_html):
     for r in table:
         while len(r) < max_cols:
             r.append("")
-    header = table[0]
-    header = [c.replace("|", "\\|") for c in header]
+    header = [c.replace("|", "\\|") for c in table[0]]
     sep = ["---" for _ in range(max_cols)]
     body = [[c.replace("|", "\\|") for c in row] for row in table[1:]]
     lines = []
@@ -115,6 +121,7 @@ def table_html_to_markdown(table_html):
     for row in body:
         lines.append("| " + " | ".join(row) + " |")
     return "\n".join(lines)
+
 
 
 def extract_tables(html_text):
@@ -129,11 +136,13 @@ def extract_tables(html_text):
     return stripped, tables
 
 
+
 def restore_tables(text, tables):
     for i, table_html in enumerate(tables, start=1):
         token = f"[[TABLE_{i}]]"
         text = text.replace(token, f"\n\n{table_html}\n\n")
     return text
+
 
 
 def html_to_markdown(container, base_url, session, images_dir, image_counter, image_prefix, referer):
@@ -151,18 +160,51 @@ def html_to_markdown(container, base_url, session, images_dir, image_counter, im
     text = handler.handle(html_without_tables)
     text = restore_tables(text, tables)
     text = re.sub("\n", "\n\n", text)
-
     return text
 
 
-def _rule_clean_markdown(text):
-    cleaned = (text or "").replace("\ufeff", "").replace("\r\n", "\n")
-    cleaned = re.sub(r"(?m)^[ \t]*\*{3,}[ \t]*$", "", cleaned)
-    cleaned = re.sub(r"\*{4,}", "", cleaned)
+
+def _strip_residual_markup(text):
+    cleaned = (text or "").replace("\ufeff", "")
+    cleaned = re.sub(r"(?is)<(script|style)[^>]*>.*?</\1>", " ", cleaned)
+    cleaned = re.sub(r"(?i)<br\s*/?>", "\n", cleaned)
+    cleaned = re.sub(r"(?i)</?(?:" + "|".join(BLOCK_TAGS) + r")[^>]*>", "\n", cleaned)
+    cleaned = re.sub(r"<[^>]+>", " ", cleaned)
+    cleaned = html_lib.unescape(cleaned)
+    cleaned = cleaned.replace("&nbsp;", " ")
+    cleaned = re.sub(r"!\[([^\]]*)\]\(([^)]*)\)", r"\1", cleaned)
+    cleaned = re.sub(r"\[([^\]]+)\]\(([^)]*)\)", r"\1", cleaned)
+    cleaned = re.sub(r"`{1,3}([^`]+)`{1,3}", r"\1", cleaned)
+    cleaned = re.sub(r"(?m)^\s{0,3}>\s?", "", cleaned)
+    cleaned = re.sub(r"(?m)^\s*[-*_]{3,}\s*$", "", cleaned)
+    cleaned = re.sub(r"(?m)^\s*#{1,6}\s*([^#\n]+?)\s*$", r"### \1", cleaned)
+    cleaned = re.sub(r"(?<!\*)\*\*([^*\n]+)\*\*(?!\*)", r"\1", cleaned)
+    cleaned = re.sub(r"(?<!_)__([^_\n]+)__(?!_)", r"\1", cleaned)
+    cleaned = re.sub(r"(?<!\*)\*([^*\n]+)\*(?!\*)", r"\1", cleaned)
+    cleaned = re.sub(r"(?<!_)_([^_\n]+)_(?!_)", r"\1", cleaned)
+    cleaned = re.sub(r"\\([*_#`>\-])", r"\1", cleaned)
+    cleaned = re.sub(r"\n[ \t]+", "\n", cleaned)
     cleaned = re.sub(r"[ \t]+\n", "\n", cleaned)
     cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+    return cleaned.strip()
+
+
+
+def _rule_clean_markdown(text):
+    cleaned = _strip_residual_markup(text)
+    cleaned = re.sub(r"(?m)^[ \t]*\*{3,}[ \t]*$", "", cleaned)
+    cleaned = re.sub(r"\*{4,}", "", cleaned)
     cleaned = re.sub(r"\n(?:[ \t]*\n)+", "\n\n", cleaned)
     return cleaned.strip()
+
+
+def _clean_quality_score(text):
+    candidate = (text or "").strip()
+    chinese = len(re.findall(r"[\u4e00-\u9fff]", candidate))
+    english_noise = len(re.findall(r"Source:|Markdown:|Content:|Status:|Unknown", candidate, flags=re.I))
+    html_noise = len(re.findall(r"<[a-zA-Z/][^>]*>", candidate))
+    return chinese * 3 + len(candidate) - english_noise * 20 - html_noise * 10
+
 
 
 def _normalize_body_headings(text, title=""):
@@ -190,6 +232,7 @@ def _normalize_body_headings(text, title=""):
     return "\n".join(normalized).strip()
 
 
+
 def clean_crawled_markdown(text, source=""):
     cleaned = _rule_clean_markdown(text)
     if not cleaned:
@@ -197,9 +240,8 @@ def clean_crawled_markdown(text, source=""):
 
     prompt = (
         "Clean the Markdown formatting without changing facts.\n"
-        "Remove broken emphasis markers like stray **** or **.\n"
-        "Collapse excessive blank lines.\n"
-        "Keep headings, links, lists, dates, names, and paragraph order.\n"
+        "Remove residual HTML tags, broken Markdown markers, stray emphasis, repeated blank lines, and raw markup noise.\n"
+        "Keep headings, lists, dates, names, links, and paragraph order.\n"
         "Return Markdown only."
     )
     user_prompt = f"Source: {source or 'crawler'}\n\nMarkdown:\n{cleaned[:3000]}"
@@ -208,16 +250,21 @@ def clean_crawled_markdown(text, source=""):
         user_prompt,
         max_tokens=500,
         temperature=0,
+        task_label=f"正在清洗正文格式：{(source or '正文')[:24]}",
     )
     if result:
-        cleaned = _rule_clean_markdown(result)
+        candidate = _rule_clean_markdown(result)
+        if _clean_quality_score(candidate) >= _clean_quality_score(cleaned):
+            cleaned = candidate
     return cleaned
+
 
 
 def save_content(titles, full_texts, doc):
     for title, full_text in zip(titles, full_texts):
         cleaned_text = clean_crawled_markdown(full_text, source=title) or _rule_clean_markdown(full_text)
         cleaned_text = _normalize_body_headings(cleaned_text, title=title)
+        cleaned_text = _rule_clean_markdown(cleaned_text)
         doc.write(f"## {title}\n\n")
         doc.write(cleaned_text.rstrip())
         doc.write("\n\n")

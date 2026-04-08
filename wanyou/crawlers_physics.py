@@ -7,7 +7,7 @@ from selenium.webdriver.common.by import By
 
 import config
 from wanyou.decider import resolve_copy_decision
-from wanyou.utils_dates import days_since_date
+from wanyou.utils_issue_filter import current_issue_cutoff, load_previous_titles, seen_in_previous_issue, should_skip_by_time
 from wanyou.utils_html import save_content
 from wanyou.utils_llm import chat_complete
 from wanyou.utils_web import build_requests_session, make_browser
@@ -124,6 +124,7 @@ def _extract_report_fields_with_llm(title: str, publish_date: str, detail_url: s
         user_prompt,
         max_tokens=300,
         temperature=0,
+        task_label=f"\u6b63\u5728\u63d0\u53d6\u5b66\u672f\u62a5\u544a\u5b57\u6bb5\uff1a{title[:24]}",
     )
     return _extract_json_block(result or "")
 
@@ -219,7 +220,28 @@ def _extract_date(text: str) -> str:
     return ""
 
 
+
+
+def _extract_list_date_from_link(link) -> str:
+    candidates = []
+    try:
+        candidates.append((link.text or "").strip())
+    except Exception:
+        pass
+    try:
+        parent = link.find_element(By.XPATH, './ancestor::*[self::li or self::tr or self::div][1]')
+        candidates.append((parent.text or "").strip())
+    except Exception:
+        pass
+    for text in candidates:
+        match = re.search(r"(20\d{2}[\u5e74\-/.]\d{1,2}[\u6708\-/.]\d{1,2}(?:\u65e5)?)", text)
+        if match:
+            return match.group(1)
+    return ""
+
 def crawl_physics(doc, _base_images_dir):
+    cutoff = current_issue_cutoff()
+    previous_titles = load_previous_titles()
     browser = make_browser()
     titles = []
     full_texts = []
@@ -234,7 +256,12 @@ def crawl_physics(doc, _base_images_dir):
             for link in links:
                 title = ((link.text or "").strip() or (link.get_attribute("title") or "").strip())
                 href = (link.get_attribute("href") or "").strip()
+                list_date = _extract_list_date_from_link(link)
                 if not href or href in seen_urls or not _looks_like_report(title):
+                    continue
+                if seen_in_previous_issue(title, previous_titles):
+                    continue
+                if list_date and should_skip_by_time(list_date, cutoff):
                     continue
 
                 seen_urls.add(href)
@@ -253,12 +280,10 @@ def crawl_physics(doc, _base_images_dir):
                 cleaned_text = _clean_physics_text(content_text, title)
                 publish_date = _extract_publish_date(title, cleaned_text or content_text)
                 date = publish_date
-                if date:
-                    try:
-                        if days_since_date(date) > config.PHYSICS_REPORT_RECENT_DAYS:
-                            continue
-                    except Exception:
-                        pass
+                if date and should_skip_by_time(date, cutoff):
+                    continue
+                if seen_in_previous_issue(title, previous_titles):
+                    continue
 
                 location_hit = any(
                     keyword.lower() in content_text.lower()
@@ -276,6 +301,7 @@ def crawl_physics(doc, _base_images_dir):
         browser.quit()
 
     if not titles:
+        print("Physics reports: no new reports found in the current time window")
         return
 
     doc.write("# 物理系学术报告\n\n")

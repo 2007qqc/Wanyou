@@ -5,7 +5,7 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 
 import config
-from wanyou.utils_dates import days_since_date, is_after_next_monday
+from wanyou.utils_issue_filter import current_issue_cutoff, load_previous_titles, seen_in_previous_issue, should_skip_by_time
 from wanyou.utils_web import make_browser, build_requests_session
 from wanyou.utils_html import html_to_markdown, save_content
 from wanyou.decider import resolve_copy_decision
@@ -22,6 +22,8 @@ def extract_content(text):
 
 
 def crawl_lib(doc, base_images_dir):
+    cutoff = current_issue_cutoff()
+    previous_titles = load_previous_titles()
     browser = make_browser()
     browser.get(config.URL_LIB_NOTICE)
     session = build_requests_session(browser)
@@ -51,7 +53,10 @@ def crawl_lib(doc, base_images_dir):
             date = time_label.text
             date = date[-11:-7]+"-"+date[-6:-4]+"-"+date[-3:-1]
 
-            if days_since_date(date) > config.DAYS_WINDOW_LIB:
+            if should_skip_by_time(date, cutoff):
+                browser.back()
+                continue
+            if seen_in_previous_issue(title, previous_titles):
                 browser.back()
                 continue
 
@@ -128,7 +133,10 @@ def crawl_lib(doc, base_images_dir):
                     date = time_label.text
                 date = year+"-"+date.split("月")[0]+"-"+date.split("月")[1].split("日")[0]
 
-                if not is_after_next_monday(date):
+                if should_skip_by_time(date, cutoff):
+                    browser.back()
+                    continue
+                if seen_in_previous_issue(title, previous_titles):
                     browser.back()
                     continue
 

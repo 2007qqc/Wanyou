@@ -8,6 +8,7 @@ from wanyou.decider import apply_keyword_rules, should_copy_with_llm
 from wanyou.wechat_client import create_api_session, dedupe_items, fetch_articles, resolve_fakeids
 from wanyou.wechat_content import enrich_items_with_content
 from wanyou.utils_html import clean_crawled_markdown
+from wanyou.utils_issue_filter import current_issue_cutoff, load_previous_titles, seen_in_previous_issue
 from wanyou.utils_llm import chat_complete
 
 
@@ -69,6 +70,23 @@ def mark_items_for_md(items):
             item["decision_source"] = "llm"
 
 
+
+
+def _prefilter_issue_window(items):
+    cutoff = current_issue_cutoff()
+    previous_titles = load_previous_titles()
+    filtered = []
+    for item in items:
+        ts = item.get("timestamp")
+        if ts:
+            published_at = datetime.datetime.fromtimestamp(ts)
+            if published_at < cutoff:
+                continue
+        if seen_in_previous_issue(item.get("title") or "", previous_titles):
+            continue
+        filtered.append(item)
+    return filtered
+
 def _filter_recent_days(items, days_limit):
     if not days_limit:
         return items
@@ -119,6 +137,7 @@ def summarize_wechat_item(item):
         user_prompt,
         max_tokens=160,
         temperature=0.2,
+        task_label=f"\u6b63\u5728\u603b\u7ed3\u516c\u4f17\u53f7\u5185\u5bb9\uff1a{title[:24]}",
     )
     if result:
         cleaned = re.sub(r"\s+", " ", result).strip()
@@ -147,6 +166,7 @@ def collect_wechat_items(days_limit=None):
 
     items = dedupe_items(items)
     items.sort(key=lambda item: item.get("timestamp") or 0, reverse=True)
+    items = _prefilter_issue_window(items)
     items = _filter_recent_days(items, days_limit)
 
     max_articles = getattr(config, "WECHAT_MAX_ARTICLES", 0)

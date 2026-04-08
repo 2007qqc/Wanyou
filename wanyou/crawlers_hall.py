@@ -6,7 +6,7 @@ from selenium.common.exceptions import NoSuchElementException
 from urllib.parse import urljoin
 
 import config
-from wanyou.utils_dates import days_since_date
+from wanyou.utils_issue_filter import current_issue_cutoff, load_previous_titles, seen_in_previous_issue, should_skip_by_time
 from wanyou.utils_web import make_browser
 
 
@@ -80,10 +80,17 @@ def crawl_hall(doc, filename_jpg, base_images_dir):
 
     result_refined = []
     titles = []
+    cutoff = current_issue_cutoff()
+    previous_titles = load_previous_titles()
 
     for i, item in enumerate(result[::-1]):
-        date = (item["date"])[:10]
-        if (item["title"] not in titles) & (item["title"] not in config.HALL_NO_CONSIDER) & (-config.HALL_RECENT_DAYS < days_since_date(date) < 0):
+        date = (item["date"])[:16]
+        if (
+            (item["title"] not in titles)
+            and (item["title"] not in config.HALL_NO_CONSIDER)
+            and not seen_in_previous_issue(item["title"], previous_titles)
+            and not should_skip_by_time(date, cutoff)
+        ):
             headers={
                 'user-agent': config.USER_AGENT}
             re1=requests.get(item["absolute_src"], headers=headers)
