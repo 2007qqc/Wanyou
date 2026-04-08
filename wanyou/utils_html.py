@@ -165,6 +165,31 @@ def _rule_clean_markdown(text):
     return cleaned.strip()
 
 
+def _normalize_body_headings(text, title=""):
+    lines = (text or "").splitlines()
+    while lines and not lines[0].strip():
+        lines.pop(0)
+
+    if lines:
+        first_line = lines[0].strip()
+        first_heading = re.sub(r"^#+\s*", "", first_line).strip()
+        if first_line.startswith("#") and title and first_heading == title.strip():
+            lines.pop(0)
+            while lines and not lines[0].strip():
+                lines.pop(0)
+
+    normalized = []
+    for line in lines:
+        stripped = line.lstrip()
+        if stripped.startswith("#"):
+            heading_text = re.sub(r"^#+\s*", "", stripped).strip()
+            if heading_text:
+                normalized.append(f"### {heading_text}")
+                continue
+        normalized.append(line)
+    return "\n".join(normalized).strip()
+
+
 def clean_crawled_markdown(text, source=""):
     cleaned = _rule_clean_markdown(text)
     if not cleaned:
@@ -192,6 +217,7 @@ def clean_crawled_markdown(text, source=""):
 def save_content(titles, full_texts, doc):
     for title, full_text in zip(titles, full_texts):
         cleaned_text = clean_crawled_markdown(full_text, source=title) or _rule_clean_markdown(full_text)
+        cleaned_text = _normalize_body_headings(cleaned_text, title=title)
         doc.write(f"## {title}\n\n")
         doc.write(cleaned_text.rstrip())
         doc.write("\n\n")

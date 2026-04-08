@@ -10,13 +10,14 @@ from selenium.webdriver.edge.service import Service
 import config
 
 
-def make_browser():
+def make_browser(headless=None):
     os.makedirs(config.SELENIUM_CACHE_DIR, exist_ok=True)
     os.environ.setdefault("SE_CACHE_PATH", os.path.abspath(config.SELENIUM_CACHE_DIR))
     profile_dir = tempfile.mkdtemp(prefix="edge-profile-", dir=os.path.abspath(config.SELENIUM_CACHE_DIR))
     options = Options()
     options.page_load_strategy = getattr(config, "PAGE_LOAD_STRATEGY", "eager")
-    if config.HEADLESS:
+    use_headless = config.HEADLESS if headless is None else bool(headless)
+    if use_headless:
         options.add_argument("--headless")
     options.add_argument("--log-level=3")
     options.add_argument("--disable-logging")

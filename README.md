@@ -2,221 +2,141 @@
 
 清华大学物理系“万有预报”自动化生成项目。
 
-项目目标是把“抓取校园信息 -> LLM 筛选与摘要 -> 富文本/H5 导出 -> 浏览器 Agent 填充”串成一条可调试、可拆分、可一键运行的流水线。当前代码按“功能实现完成，外部网络与站点可达性单独处理”的原则组织。
+当前流程已经覆盖：
+- 校园站点抓取
+- 统一认证登录源抓取
+- LLM 筛选、摘要、格式清洗
+- Markdown / H5 HTML / Browser Agent payload 导出
 
-## Current Status
-
-在排除代理、防火墙、校园站点临时不可达等网络问题的前提下，当前仓库已经实现这些能力：
-
-- 校园网站抓取模块
-- LLM 筛选与摘要模块
-- 富文本 H5 导出模块
-- 浏览器 Agent payload 导出模块
-- 可拆分的 `skills/` 模块
-- 可单次运行的总控入口
-
-当前默认大模型为 DeepSeek：
-
-- `LLM_ENABLED = True`
-- `LLM_PROVIDER = "deepseek"`
-- `LLM_MODEL = "deepseek-chat"`
-
-## Requirements
+## 运行环境
 
 - Python 3.10+
 - Microsoft Edge
-- Edge WebDriver 可用
-- 如需 DOCX 备份导出，还需要本地安装 `pandoc`
+- Edge WebDriver
+- 如需导出 DOCX，还需要本机安装 `pandoc`
 
-Python 依赖：
+安装依赖：
 
 ```powershell
 python -m pip install -r requirements.txt
 python -m pip install PyYAML
 ```
 
-## Environment Variables
+## 快速运行
 
-推荐只通过环境变量提供 key，不要把密钥写入仓库。
-
-PowerShell 示例：
+公开站点 smoke test：
 
 ```powershell
-$env:DEEPSEEK_API_KEY = "your-key"
-$env:OPENAI_API_KEY = "your-key"
-$env:GEMINI_API_KEY = "your-key"
-$env:ZHIPUAI_API_KEY = "your-key"
+python skills/wanyou-full-run/scripts/run_wanyou_full_run.py --public-only --skip-docx
+```
+
+包含统一认证登录源的完整运行：
+
+```powershell
+python skills/wanyou-full-run/scripts/run_wanyou_full_run.py --with-login
+```
+
+## 登录与二次认证
+
+### 统一认证输入
+
+运行带登录源的流程时，程序会提示输入一次清华统一认证用户名和密码。
+
+- 默认复用同一套统一认证账号给 `教务通知` 和 `家园网信息`
+- 密码输入时会回显 `·`
+- 不会明文显示密码
+
+### 共享浏览器会话
+
+登录源现在改成了：
+
+1. 只打开一个 Edge 浏览器会话
+2. 只做一次统一认证
+3. 登录成功后复用同一个浏览器继续抓取 `教务通知` 和 `家园网信息`
+
+这可以避免两个栏目分别重复登录，减少统一认证流程冲突。
+
+### 二次认证人工接管
+
+如果统一认证进入二次认证页，程序当前采用半自动方式：
+
+1. 自动弹出可见的 Edge 浏览器
+2. 用户在浏览器中手动完成统一认证或二次认证
+3. 回到终端按回车
+4. 程序继续抓取教务和家园网信息
+
+如果浏览器本来就已经有有效登录态，程序会直接复用，不再重复找登录按钮。
+
+## 调试输出
+
+程序现在会输出更适合调试的进度信息，例如：
+
+- `正在打开统一认证浏览器会话`
+- `正在提交统一认证账号密码`
+- `统一认证登录成功`
+- `成功登录教务，正在获取信息`
+- `成功登录家园网，正在获取信息`
+- `等待LLM输出中`
+
+所有涉及 LLM 的步骤都会提示 `等待LLM输出中`，包括：
+
+- 抓取正文格式清洗
+- 公众号摘要
+- 物理学术报告提取
+- 栏目过渡语 / 摘要生成
+- 教务页面结构诊断
+
+## Debug 文件
+
+每次运行产物在：
+
+```text
+output/<timestamp>/
+```
+
+重点调试目录：
+
+```text
+output/<timestamp>/debug/
+```
+
+常见文件包括：
+
+- `shared_login_attempt.txt`
+- `shared_after_login.html`
+- `shared_after_manual_auth.html`
+- `info_after_login.html`
+- `info_after_open_teaching.html`
+- `info_llm_hint.json`
+- `myhome_after_login.html`
+
+其中：
+
+- `shared_login_attempt.txt` 会记录用户名长度、密码长度、密码哈希、SM2 加密长度、指纹字段长度等
+- `info_llm_hint.json` 会在教务新版页面列表为空时，保存 LLM 基于页面 HTML/JS 给出的结构诊断
+
+## 当前支持的栏目
+
+- 教务通知
+- 家园网信息
+- 图书馆信息
+- 新清华学堂
+- 物理系学术报告
+- 学生会信息
+- 青年科协信息
+- 学生社团信息
+- 学生公益信息
+- 其他公众号信息
+
+## 公众号抓取
+
+公众号抓取使用 `down.mptext.top` API，不直接登录微信。
+
+需要的环境变量：
+
+```powershell
 $env:WECHAT_PUBLIC_API_KEY = "your-key"
-$env:OCR_SPACE_API_KEY = "your-key"
 ```
-
-项目中 LLM 的默认环境变量名定义在 [config.py](/E:/PHYS33/StudentsUnion/Wanyou/config.py)：
-
-- `DEEPSEEK_API_KEY_ENV`
-- `OPENAI_API_KEY_ENV`
-- `GEMINI_API_KEY_ENV`
-- `ZHIPUAI_API_KEY_ENV`
-- `WECHAT_IMAGE_LLM_API_KEY_ENV`
-
-## Main Pipeline
-
-总控入口在 [main.py](/E:/PHYS33/StudentsUnion/Wanyou/main.py)。
-
-主函数：
-
-- `main()`
-- `run_pipeline(...)`
-
-`run_pipeline(...)` 支持这些关键参数：
-
-- `public_only`
-- `include_wechat`
-- `synthesize`
-- `export_docx`
-- `export_html`
-- `export_agent_payload`
-
-这意味着你可以把完整流程拆成 smoke test、公开站点测试、带登录全量运行等多种模式。
-
-## Skills
-
-项目内置了四个可独立调用、便于 debug 的 skills，全部位于 [skills](/E:/PHYS33/StudentsUnion/Wanyou/skills)。
-
-### 1. Campus Crawl
-
-- Skill: [skills/wanyou-campus-crawl/SKILL.md](/E:/PHYS33/StudentsUnion/Wanyou/skills/wanyou-campus-crawl/SKILL.md)
-- 作用：抓取校园网页，区分公开源和登录源，优先定位抓取失败原因
-
-关注文件：
-
-- [wanyou/crawlers_info.py](/E:/PHYS33/StudentsUnion/Wanyou/wanyou/crawlers_info.py)
-- [wanyou/crawlers_myhome.py](/E:/PHYS33/StudentsUnion/Wanyou/wanyou/crawlers_myhome.py)
-- [wanyou/crawlers_lib.py](/E:/PHYS33/StudentsUnion/Wanyou/wanyou/crawlers_lib.py)
-- [wanyou/crawlers_hall.py](/E:/PHYS33/StudentsUnion/Wanyou/wanyou/crawlers_hall.py)
-- [wanyou/crawlers_physics.py](/E:/PHYS33/StudentsUnion/Wanyou/wanyou/crawlers_physics.py)
-
-### 2. LLM Filter
-
-- Skill: [skills/wanyou-llm-filter/SKILL.md](/E:/PHYS33/StudentsUnion/Wanyou/skills/wanyou-llm-filter/SKILL.md)
-- 作用：处理关键词规则、LLM keep/drop、摘要和过渡语
-
-关注文件：
-
-- [wanyou/decider.py](/E:/PHYS33/StudentsUnion/Wanyou/wanyou/decider.py)
-- [wanyou/synthesizer.py](/E:/PHYS33/StudentsUnion/Wanyou/wanyou/synthesizer.py)
-- [wanyou/utils_llm.py](/E:/PHYS33/StudentsUnion/Wanyou/wanyou/utils_llm.py)
-
-### 3. Richtext Export
-
-- Skill: [skills/wanyou-richtext-export/SKILL.md](/E:/PHYS33/StudentsUnion/Wanyou/skills/wanyou-richtext-export/SKILL.md)
-- 作用：把 Markdown 导出成 H5 HTML、浏览器 Agent payload，必要时导出 DOCX
-
-关注文件：
-
-- [generators/h5_generator.py](/E:/PHYS33/StudentsUnion/Wanyou/generators/h5_generator.py)
-- [generators/browser_agent.py](/E:/PHYS33/StudentsUnion/Wanyou/generators/browser_agent.py)
-
-### 4. Full Run
-
-- Skill: [skills/wanyou-full-run/SKILL.md](/E:/PHYS33/StudentsUnion/Wanyou/skills/wanyou-full-run/SKILL.md)
-- 脚本： [skills/wanyou-full-run/scripts/run_wanyou_full_run.py](/E:/PHYS33/StudentsUnion/Wanyou/skills/wanyou-full-run/scripts/run_wanyou_full_run.py)
-- 作用：一次运行整条流水线并返回产物路径
-
-## AGENTS.md
-
-项目总控与模块关系见 [AGENTS.md](/E:/PHYS33/StudentsUnion/Wanyou/AGENTS.md)。
-
-这里定义了：
-
-- 各模块职责
-- 调试顺序
-- 一键运行命令
-- 典型超时/网络问题来源
-
-推荐调试顺序：
-
-1. 先测 `Campus Crawl`
-2. 再看 `LLM Filter`
-3. 最后看 `Richtext Export`
-4. 一切正常后再跑 `Full Run`
-
-## One-Run Commands
-
-公开站点 smoke run：
-
-```powershell
-python skills/wanyou-full-run/scripts/run_wanyou_full_run.py --public-only --skip-docx
-```
-
-带登录源的全量运行：
-
-```powershell
-python skills/wanyou-full-run/scripts/run_wanyou_full_run.py --with-login
-```
-
-如果只想验证富文本链路：
-
-```powershell
-python skills/wanyou-full-run/scripts/run_wanyou_full_run.py --public-only --skip-wechat --skip-docx
-```
-
-## Campus Site Connectivity
-
-下面是当前项目涉及的校园网页及其联网方式。
-
-### Login-Required Sources
-
-这两类站点依赖 WebVPN / 校园身份认证：
-
-- 教务信息 `URL_INFO`
-- 家园网 `URL_MYHOME`
-
-联网方式：
-
-- 先保证可以访问清华 WebVPN
-- 运行时输入校园账号密码
-- 由 Selenium 在浏览器内完成登录后抓取
-
-适合命令：
-
-```powershell
-python skills/wanyou-full-run/scripts/run_wanyou_full_run.py --with-login
-```
-
-### Public Sources
-
-以下站点默认按公开 HTTPS 访问：
-
-- 图书馆通知 `URL_LIB_NOTICE`
-- 图书馆活动 `URL_LIB_EVENT`
-- 新清华学堂 `URL_HALL_PAGES`
-- 物理系学术活动 `PHYSICS_REPORT_LIST_PAGES`
-
-联网方式：
-
-- 直接公网 HTTPS
-- 不需要校园账号
-- 优先用于 smoke test 和网络排障
-
-适合命令：
-
-```powershell
-python skills/wanyou-full-run/scripts/run_wanyou_full_run.py --public-only --skip-docx
-```
-
-### WeChat Public History
-
-公众号历史抓取不直接连微信，而是通过 `down.mptext.top` API：
-
-- 账号搜索 `/account`
-- 历史文章 `/article`
-- 正文下载 `/download`
-
-联网方式：
-
-- 访问第三方 API
-- 可选 `WECHAT_PUBLIC_API_KEY`
-- 可选 OCR.Space
 
 独立运行：
 
@@ -224,37 +144,15 @@ python skills/wanyou-full-run/scripts/run_wanyou_full_run.py --public-only --ski
 python wechat_public.py
 ```
 
-## Richtext Outputs
+当前行为：
 
-默认输出目录在 `output/<timestamp>/`。
+- 先抓取正文
+- 再用 LLM 生成短摘要
+- 最终 Markdown 默认只写摘要，不再直接铺全文
 
-可能生成这些文件：
+## LLM 相关
 
-- `wanyou_<timestamp>_raw.md`
-- `wanyou_<timestamp>.md`
-- `wanyou_<timestamp>.html`
-- `wanyou_<timestamp>_agent.json`
-- `wanyou_<timestamp>.docx`
-
-说明：
-
-- HTML 是默认富文本验证目标
-- Agent JSON 是后续秀米/浏览器自动填充的输入
-- DOCX 依赖本地 `pandoc`
-
-## LLM Routing
-
-LLM 路由集中在 [wanyou/utils_llm.py](/E:/PHYS33/StudentsUnion/Wanyou/wanyou/utils_llm.py)。
-
-当前支持：
-
-- `deepseek`
-- `openai`
-- `chatgpt`
-- `gemini`
-- `zhipuai`
-
-切换方式在 [config.py](/E:/PHYS33/StudentsUnion/Wanyou/config.py)：
+当前默认模型配置在 `config.py`：
 
 ```python
 LLM_ENABLED = True
@@ -262,39 +160,64 @@ LLM_PROVIDER = "deepseek"
 LLM_MODEL = "deepseek-chat"
 ```
 
-微信图片分类也支持单独 provider：
+常用环境变量示例：
 
-- `WECHAT_IMAGE_LLM_PROVIDER`
-- `WECHAT_IMAGE_LLM_MODEL`
-- `WECHAT_IMAGE_LLM_API_KEY_ENV`
-- `WECHAT_IMAGE_LLM_BASE_URL`
+```powershell
+$env:DEEPSEEK_API_KEY = "your-key"
+$env:OPENAI_API_KEY = "your-key"
+$env:GEMINI_API_KEY = "your-key"
+$env:ZHIPUAI_API_KEY = "your-key"
+$env:OCR_SPACE_API_KEY = "your-key"
+```
 
-## Known Network Notes
+## 最近新增功能
 
-如果外部网络不稳定，当前代码会尽量做到：
+相较于之前版本，最近新增或重构了这些功能：
 
-- 单个站点失败不阻断整条流水线
-- 最终仍然导出 Markdown / H5 / Agent payload
-- 在 fallback 文本中记录抓取失败原因
+- 统一认证登录源改为共享同一个已认证 Edge 会话
+- 支持二次认证的半自动人工接管
+- 登录过程新增明确进度提示
+- LLM 调用统一新增 `等待LLM输出中`
+- 抓取正文新增 LLM 格式清洗
+- 公众号输出从全文改为摘要优先
+- 学术报告新增乱码清洗与字段提取
+- 家园网正文标题层级自动降级，避免和栏目标题打平
+- 教务新版页面新增备用入口与 LLM 结构诊断兜底
+- 输出缺失栏目时自动补齐占位卡片和错误原因
 
-常见现象：
+## 已知问题
 
-- `WinError 10013`
-- `ERR_CONNECTION_CLOSED`
-- `ERR_CONNECTION_RESET`
-- renderer timeout
+- 教务通知页面已经升级为新版前端，当前虽然能进入 `教务通知` 栏目，但有时列表仍为空，仍需继续适配前端数据加载方式
+- 如果统一认证触发更复杂的二次认证流程，目前仍需用户手动接管浏览器
+- DOCX 导出依赖本机 `pandoc`
 
-这类问题优先视为网络环境、代理、防火墙、站点连接策略或校园访问条件问题，而不是内容解析逻辑问题。
+## 产物
 
-## Validation
+默认输出目录：
 
-当前本地已完成的验证包括：
+```text
+output/<timestamp>/
+```
 
-- Python 编译检查
-- skill 结构检查
-- DeepSeek API 调用验证
-- H5 模板导出验证
-- browser-agent payload 导出验证
-- `public-only` 一键运行验证
+可能生成：
 
-如果外站当天不可达，系统仍会输出可编辑的富文本模板结果，而不是直接中断。
+- `wanyou_<timestamp>_raw.md`
+- `wanyou_<timestamp>.md`
+- `wanyou_<timestamp>.html`
+- `wanyou_<timestamp>_agent.json`
+- `wanyou_<timestamp>.docx`
+
+## 排查建议
+
+推荐调试顺序：
+
+1. 先看 `debug/` 下的统一认证和页面快照
+2. 再看 `raw.md`
+3. 最后看 `final .md / .html`
+
+如果登录源失败，请优先核对：
+
+1. 是否真的进入了统一认证成功后的页面
+2. 是否触发了二次认证
+3. `shared_login_attempt.txt` 里的 `probe_sm2pass_length` 与 `probe_finger_gen_print_length`
+4. `info_llm_hint.json` 是否给出了新版教务页面的额外线索

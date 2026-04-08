@@ -14,6 +14,7 @@ from wanyou.crawlers_lib import crawl_lib
 from wanyou.crawlers_myhome import crawl_myhome
 from wanyou.crawlers_physics import crawl_physics
 from wanyou.synthesizer import build_augmented_markdown
+from wanyou.unified_auth import authenticate_shared_browser
 from wanyou.utils_auth import prompt_credentials
 from wanyou.wechat_pipeline import collect_wechat_items, write_sectioned_md_stream
 
@@ -83,9 +84,9 @@ def _append_stage_error_sections(markdown_text: str, stage_errors: dict) -> str:
     return text + "".join(extra_sections)
 
 
-def _run_stage(stage_name: str, func, *args):
+def _run_stage(stage_name: str, func, *args, **kwargs):
     try:
-        func(*args)
+        func(*args, **kwargs)
         return None
     except Exception as exc:
         message = _format_error_message(exc)
@@ -198,22 +199,57 @@ def run_pipeline(
 
     with open(raw_markdown_path, "w", encoding="utf-8") as doc:
         if not public_only:
-            stage_errors["crawl_info"] = _run_stage(
-                "crawl_info",
-                crawl_info,
-                doc,
-                base_images_dir,
-                credentials["info"]["username"],
-                credentials["info"]["password"],
-            )
-            stage_errors["crawl_myhome"] = _run_stage(
-                "crawl_myhome",
-                crawl_myhome,
-                doc,
-                base_images_dir,
-                credentials["myhome"]["username"],
-                credentials["myhome"]["password"],
-            )
+            debug_dir = os.path.join(run_dir, "debug")
+            auth_username = credentials["info"]["username"] or credentials["myhome"]["username"]
+            auth_password = credentials["info"]["password"] or credentials["myhome"]["password"]
+            if (
+                credentials["info"]["username"]
+                and credentials["myhome"]["username"]
+                and credentials["info"]["username"] != credentials["myhome"]["username"]
+            ) or (
+                credentials["info"]["password"]
+                and credentials["myhome"]["password"]
+                and credentials["info"]["password"] != credentials["myhome"]["password"]
+            ):
+                print("检测到教务和家园网凭据不同；当前已改为共享统一认证，会优先使用教务凭据。")
+
+            shared_browser = None
+            auth_error = None
+            try:
+                shared_browser = authenticate_shared_browser(
+                    auth_username,
+                    auth_password,
+                    debug_dir,
+                    config.URL_INFO,
+                    stage_label="统一认证",
+                )
+            except Exception as exc:
+                auth_error = _format_error_message(exc)
+
+            if shared_browser is None:
+                stage_errors["crawl_info"] = auth_error or "统一认证失败"
+                stage_errors["crawl_myhome"] = auth_error or "统一认证失败"
+            else:
+                try:
+                    stage_errors["crawl_info"] = _run_stage(
+                        "crawl_info",
+                        crawl_info,
+                        doc,
+                        base_images_dir,
+                        browser=shared_browser,
+                    )
+                    stage_errors["crawl_myhome"] = _run_stage(
+                        "crawl_myhome",
+                        crawl_myhome,
+                        doc,
+                        base_images_dir,
+                        browser=shared_browser,
+                    )
+                finally:
+                    try:
+                        shared_browser.quit()
+                    except Exception:
+                        pass
         stage_errors["crawl_lib"] = _run_stage("crawl_lib", crawl_lib, doc, base_images_dir)
         stage_errors["crawl_hall"] = _run_stage("crawl_hall", crawl_hall, doc, filename_jpg, base_images_dir)
         stage_errors["crawl_physics"] = _run_stage("crawl_physics", crawl_physics, doc, base_images_dir)

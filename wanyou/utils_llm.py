@@ -237,6 +237,8 @@ def chat_complete(
     if not config.LLM_ENABLED:
         return None
 
+    print("等待LLM输出中")
+
     provider_name = _normalize_provider(provider)
     model_name = model or config.LLM_MODEL
     timeout = timeout_seconds or config.LLM_TIMEOUT_SECONDS

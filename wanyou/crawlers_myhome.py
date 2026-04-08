@@ -9,10 +9,11 @@ from selenium.webdriver.support.ui import WebDriverWait
 
 import config
 from wanyou.decider import resolve_copy_decision
+from wanyou.unified_auth import authenticate_shared_browser
 from wanyou.utils_dates import days_since_date
 from wanyou.utils_html import html_to_markdown, save_content
 from wanyou.utils_ocr import convert_markdown_images_to_text
-from wanyou.utils_web import build_requests_session, dump_browser_snapshot, make_browser, open_in_new_tab
+from wanyou.utils_web import build_requests_session, dump_browser_snapshot, open_in_new_tab
 
 
 def _find_first(browser, selectors):
@@ -38,36 +39,6 @@ def _wait_and_find(browser, selectors, timeout=None):
     if last_error:
         raise last_error
     raise TimeoutException("No selector matched in wait_and_find")
-
-
-def _login(browser, username, password):
-    browser.get(config.URL_MYHOME)
-    _find_first(
-        browser,
-        [
-            (By.ID, "i_user"),
-            (By.NAME, "username"),
-            (By.CSS_SELECTOR, "input[type='text']"),
-        ],
-    ).send_keys(username)
-    _find_first(
-        browser,
-        [
-            (By.ID, "i_pass"),
-            (By.NAME, "password"),
-            (By.CSS_SELECTOR, "input[type='password']"),
-        ],
-    ).send_keys(password)
-    _find_first(
-        browser,
-        [
-            (By.CSS_SELECTOR, "a.btn.btn-lg.btn-primary.btn-block"),
-            (By.CSS_SELECTOR, "button[type='submit']"),
-            (By.XPATH, "//button[contains(normalize-space(.), '登录')]"),
-            (By.XPATH, "//a[contains(normalize-space(.), '登录')]"),
-        ],
-    ).click()
-    time.sleep(config.SLEEP_SECONDS)
 
 
 def _find_notice_links(browser):
@@ -130,33 +101,17 @@ def _extract_detail_container(browser):
     return _wait_and_find(browser, selectors)
 
 
-def _looks_like_login_page(browser):
-    selectors = [
-        (By.ID, "i_user"),
-        (By.ID, "i_pass"),
-        (By.NAME, "username"),
-        (By.NAME, "password"),
-        (By.CSS_SELECTOR, "input[type='password']"),
-    ]
-    for by, value in selectors:
-        try:
-            if browser.find_elements(by, value):
-                return True
-        except Exception:
-            continue
-    return False
-
-
-def crawl_myhome(doc, base_images_dir, username, password):
-    browser = make_browser()
+def crawl_myhome(doc, base_images_dir, username="", password="", browser=None):
     debug_dir = os.path.join(os.path.dirname(base_images_dir), "debug")
+    owns_browser = browser is None
+    if browser is None:
+        browser = authenticate_shared_browser(username, password, debug_dir, config.URL_MYHOME, stage_label="家园网")
+
     try:
-        _login(browser, username, password)
+        print("成功登录家园网，正在获取信息")
         browser.get(config.URL_MYHOME)
         dump_browser_snapshot(browser, debug_dir, "myhome_after_login")
-        if _looks_like_login_page(browser):
-            raise RuntimeError("家园网登录未通过，请检查该站点的用户名和密码是否正确")
-        print("家园网登录成功，开始抓取通知")
+        print("已进入家园网页面，正在读取通知列表")
         session = build_requests_session(browser)
 
         notice_links = _find_notice_links(browser)
@@ -223,7 +178,9 @@ def crawl_myhome(doc, base_images_dir, username, password):
             dump_browser_snapshot(browser, debug_dir, "myhome_no_titles")
             raise RuntimeError("家园网抓取完成但未获得有效通知，可能是筛选条件过严或详情页选择器失效")
 
+        print(f"家园网信息抓取完成，共获取 {len(titles)} 条")
         doc.write("# 家园网信息\n\n")
         save_content(titles, full_texts, doc)
     finally:
-        browser.quit()
+        if owns_browser:
+            browser.quit()

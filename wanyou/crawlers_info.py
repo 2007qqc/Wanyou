@@ -1,19 +1,40 @@
+import json
 import os
+import re
 import time
-from selenium.common.exceptions import TimeoutException
+
+from selenium.common.exceptions import NoSuchElementException, TimeoutException
 from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import NoSuchElementException
+from selenium.webdriver.support.ui import WebDriverWait
 
 import config
-from wanyou.utils_dates import days_since_date
-from wanyou.utils_web import make_browser, build_requests_session, dump_browser_snapshot, open_in_new_tab
-from wanyou.utils_html import html_to_markdown, save_content
 from wanyou.decider import resolve_copy_decision
+from wanyou.unified_auth import authenticate_shared_browser
+from wanyou.utils_dates import days_since_date
+from wanyou.utils_html import html_to_markdown, save_content
+from wanyou.utils_llm import chat_complete
+from wanyou.utils_web import build_requests_session, dump_browser_snapshot, open_in_new_tab
 
 
-def _find_notice_blocks(browser):
+TEACHING_FALLBACK_KEYWORDS = [
+    "教务",
+    "课程",
+    "选课",
+    "退课",
+    "考试",
+    "学籍",
+    "培养",
+    "本科生",
+    "研究生",
+    "成绩",
+    "补选",
+    "重修",
+    "SRT",
+]
+
+
+def _find_notice_blocks(browser, extra_selectors=None):
     selectors = [
         (By.CSS_SELECTOR, "div.you"),
         (By.CSS_SELECTOR, ".you"),
@@ -21,14 +42,22 @@ def _find_notice_blocks(browser):
         (By.CSS_SELECTOR, "li.notice-item"),
         (By.CSS_SELECTOR, "div[class*='notice']"),
         (By.CSS_SELECTOR, "li[class*='notice']"),
+        (By.CSS_SELECTOR, "#liebiaotml > div"),
+        (By.CSS_SELECTOR, "#liebiaotml > li"),
+        (By.CSS_SELECTOR, "#liebiaotml a"),
     ]
+    for selector in extra_selectors or []:
+        if isinstance(selector, (list, tuple)) and len(selector) == 2:
+            selectors.insert(0, (selector[0], selector[1]))
+
     for by, value in selectors:
         try:
             blocks = browser.find_elements(by, value)
         except Exception:
             continue
-        if blocks:
-            return blocks
+        usable = [block for block in blocks if (block.text or "").strip() or block.get_attribute("href")]
+        if usable:
+            return usable
     return []
 
 
@@ -39,6 +68,9 @@ def _extract_block_link(block):
         (By.CSS_SELECTOR, "a[title]"),
         (By.TAG_NAME, "a"),
     ]
+    if (block.get_attribute("href") or "").strip():
+        href = (block.get_attribute("href") or "").strip()
+        return block, href
     for by, value in selectors:
         try:
             link = block.find_element(by, value)
@@ -126,118 +158,198 @@ def _open_teaching_section(browser):
     ]
     tab = _wait_and_find(browser, selectors)
     browser.execute_script("arguments[0].click();", tab)
-
-
-def _looks_like_login_page(browser):
-    selectors = [
-        (By.ID, "i_user"),
-        (By.ID, "i_pass"),
-        (By.NAME, "username"),
-        (By.NAME, "password"),
-        (By.CSS_SELECTOR, "input[type='password']"),
-    ]
-    for by, value in selectors:
-        try:
-            if browser.find_elements(by, value):
-                return True
-        except Exception:
-            continue
-    return False
-
-
-def crawl_info(doc, base_images_dir, username, password):
-    browser = make_browser()
-    debug_dir = os.path.join(os.path.dirname(base_images_dir), "debug")
-    browser.get(config.URL_INFO)
-    button = _find_first(browser, [(By.ID, "i_user"), (By.NAME, "username"), (By.CSS_SELECTOR, "input[type='text']")])
-    button.send_keys(username)
-    button = _find_first(browser, [(By.ID, "i_pass"), (By.NAME, "password"), (By.CSS_SELECTOR, "input[type='password']")])
-    button.send_keys(password)
-    button = _find_first(
-        browser,
-        [
-            (By.CSS_SELECTOR, "a.btn.btn-lg.btn-primary.btn-block"),
-            (By.CSS_SELECTOR, "button[type='submit']"),
-            (By.XPATH, "//button[contains(normalize-space(.), '登录')]"),
-            (By.XPATH, "//a[contains(normalize-space(.), '登录')]"),
-        ],
-    )
-    button.click()
-    time.sleep(config.SLEEP_SECONDS)
-
-    browser.get(config.URL_INFO)
-    dump_browser_snapshot(browser, debug_dir, "info_after_login")
-    if _looks_like_login_page(browser):
-        browser.quit()
-        raise RuntimeError("教务登录未通过，请检查该站点的用户名和密码是否正确")
-    print("教务登录成功，开始抓取通知")
-    session = build_requests_session(browser)
-
     try:
-        _open_teaching_section(browser)
-        time.sleep(1)
-        dump_browser_snapshot(browser, debug_dir, "info_after_open_teaching")
+        browser.execute_script("if (typeof golm_func === 'function') { golm_func('LM_JWGG'); }")
     except Exception:
         pass
 
-    notice_blocks = _find_notice_blocks(browser)
-    if not notice_blocks:
-        dump_browser_snapshot(browser, debug_dir, "info_no_notice_blocks")
-        browser.quit()
-        raise RuntimeError("教务页未发现通知列表，可能是登录未生效或栏目入口已变更")
+
+def _page_shows_no_data(browser):
+    selectors = [
+        (By.ID, "getmore1"),
+        (By.CSS_SELECTOR, ".wushuju"),
+        (By.CSS_SELECTOR, ".nulltag"),
+    ]
+    for by, value in selectors:
+        try:
+            text = " ".join((node.text or "").strip() for node in browser.find_elements(by, value))
+        except Exception:
+            continue
+        if "暂无数据" in text:
+            return True
+    return False
+
+
+def _info_url_with_lmid(base_url: str, lmid: str) -> str:
+    if "lmid=" in base_url:
+        return re.sub(r"lmid=[^&]+", f"lmid={lmid}", base_url)
+    joiner = "&" if "?" in base_url else "?"
+    return f"{base_url}{joiner}lmid={lmid}"
+
+
+def _looks_like_teaching_title(title: str) -> bool:
+    text = (title or "").strip().lower()
+    return any(keyword.lower() in text for keyword in TEACHING_FALLBACK_KEYWORDS)
+
+
+def _write_info_llm_hint(debug_dir, browser, session):
+    try:
+        script_sources = browser.execute_script(
+            "return Array.from(document.scripts).map(s => s.src).filter(Boolean);"
+        )
+    except Exception:
+        script_sources = []
+
+    interesting_scripts = []
+    for src in script_sources:
+        if not any(key in src for key in ["xxfb", "template", "info"]):
+            continue
+        try:
+            resp = session.get(src, timeout=10)
+            resp.raise_for_status()
+            interesting_scripts.append(f"URL: {src}\n{resp.text[:5000]}")
+        except Exception:
+            continue
+        if len(interesting_scripts) >= 2:
+            break
+
+    page_html = (browser.page_source or "")[:8000]
+    prompt = (
+        "You are diagnosing a campus notice page.\n"
+        "The current page has already activated the 教务通知 tab but the list is empty.\n"
+        "Read the HTML and JS snippets and output compact JSON with keys:\n"
+        'selectors: array of likely item selectors,\n'
+        'calls: array of likely JS calls to load data,\n'
+        'diagnosis: short Chinese sentence.\n'
+        "Only output JSON."
+    )
+    user_prompt = f"HTML:\n{page_html}\n\nJS:\n{chr(10).join(interesting_scripts)[:9000]}"
+    result = chat_complete(prompt, user_prompt, max_tokens=300, temperature=0)
+    if not result:
+        return
+    os.makedirs(debug_dir, exist_ok=True)
+    with open(os.path.join(debug_dir, "info_llm_hint.json"), "w", encoding="utf-8") as f:
+        f.write(result)
+
+
+def _collect_info_items(browser, session, base_images_dir, title_filter=None):
     seen_urls = set()
     web = browser.window_handles[0]
-
     titles = []
     full_texts = []
     image_counter = [0]
     inline_images_dir = os.path.join(base_images_dir, "inline")
+    notice_blocks = _find_notice_blocks(browser)
 
     for block in notice_blocks:
         try:
             try:
-                block.find_element(By.CSS_SELECTOR, '.icon.iconfont.icon-a-14.zhidi')
+                block.find_element(By.CSS_SELECTOR, ".icon.iconfont.icon-a-14.zhidi")
                 up = False
             except NoSuchElementException:
                 up = True
-            link, url = _extract_block_link(block)
+            _, url = _extract_block_link(block)
 
-            if url not in seen_urls:
-                seen_urls, browser = open_in_new_tab(url, seen_urls, browser, web)
+            if url in seen_urls:
+                continue
 
-                time.sleep(2)
-                date = _extract_detail_date(browser)
+            seen_urls, browser = open_in_new_tab(url, seen_urls, browser, web)
+            time.sleep(2)
+            date = _extract_detail_date(browser)
 
-                if (days_since_date(date) > config.DAYS_WINDOW_INFO) & up:
-                    break
-
-                title = _extract_detail_title(browser)
-                decision = resolve_copy_decision("info", title, date)
-                if decision:
-                    container = _extract_detail_container(browser)
-                    titles.append(title)
-                    full_texts.append(
-                        html_to_markdown(
-                            container,
-                            browser.current_url,
-                            session,
-                            inline_images_dir,
-                            image_counter,
-                            "info",
-                            browser.current_url,
-                        )
-                    )
-
+            if (days_since_date(date) > config.DAYS_WINDOW_INFO) and up:
                 browser.close()
                 browser.switch_to.window(web)
+                continue
 
+            title = _extract_detail_title(browser)
+            if title_filter and not title_filter(title):
+                browser.close()
+                browser.switch_to.window(web)
+                continue
+
+            decision = resolve_copy_decision("info", title, date)
+            if decision:
+                container = _extract_detail_container(browser)
+                titles.append(title)
+                full_texts.append(
+                    html_to_markdown(
+                        container,
+                        browser.current_url,
+                        session,
+                        inline_images_dir,
+                        image_counter,
+                        "info",
+                        browser.current_url,
+                    )
+                )
+
+            browser.close()
+            browser.switch_to.window(web)
         except Exception:
+            try:
+                if len(browser.window_handles) > 1:
+                    browser.close()
+                    browser.switch_to.window(web)
+            except Exception:
+                pass
             continue
 
-    if not titles:
-        dump_browser_snapshot(browser, debug_dir, "info_no_titles")
-        browser.quit()
-        raise RuntimeError("教务抓取完成但未获得有效通知，可能是筛选条件过严或详情页选择器失效")
-    browser.quit()
-    doc.write("# 教务通知\n\n")
-    save_content(titles, full_texts, doc)
+    return titles, full_texts
+
+
+def crawl_info(doc, base_images_dir, username="", password="", browser=None):
+    debug_dir = os.path.join(os.path.dirname(base_images_dir), "debug")
+    owns_browser = browser is None
+    if browser is None:
+        browser = authenticate_shared_browser(username, password, debug_dir, config.URL_INFO, stage_label="教务")
+
+    try:
+        print("成功登录教务，正在获取信息")
+        browser.get(config.URL_INFO)
+        dump_browser_snapshot(browser, debug_dir, "info_after_login")
+        print("已进入教务页面，正在定位教务通知入口")
+        session = build_requests_session(browser)
+
+        try:
+            _open_teaching_section(browser)
+            time.sleep(2)
+            dump_browser_snapshot(browser, debug_dir, "info_after_open_teaching")
+            print("已打开教务通知栏目，正在读取列表")
+        except Exception:
+            pass
+
+        titles, full_texts = _collect_info_items(browser, session, base_images_dir)
+
+        if not titles and _page_shows_no_data(browser):
+            fallback_specs = [
+                ("LM_JWGG", None, "info_direct_jwgg"),
+                ("LM_ZJQRXXHZ", _looks_like_teaching_title, "info_recent_summary"),
+                ("all", _looks_like_teaching_title, "info_all_sections"),
+            ]
+            for lmid, title_filter, debug_name in fallback_specs:
+                print(f"教务主列表为空，正在尝试备用入口 {lmid}")
+                browser.get(_info_url_with_lmid(config.URL_INFO, lmid))
+                time.sleep(2)
+                dump_browser_snapshot(browser, debug_dir, debug_name)
+                extra_titles, extra_texts = _collect_info_items(
+                    browser,
+                    session,
+                    base_images_dir,
+                    title_filter=title_filter,
+                )
+                if extra_titles:
+                    titles, full_texts = extra_titles, extra_texts
+                    break
+
+        if not titles:
+            dump_browser_snapshot(browser, debug_dir, "info_no_notice_blocks")
+            _write_info_llm_hint(debug_dir, browser, session)
+            raise RuntimeError("教务通知页已打开，但列表为空或前端接口未返回数据，需继续适配新版页面")
+
+        print(f"教务信息抓取完成，共获取 {len(titles)} 条")
+        doc.write("# 教务通知\n\n")
+        save_content(titles, full_texts, doc)
+    finally:
+        if owns_browser:
+            browser.quit()
