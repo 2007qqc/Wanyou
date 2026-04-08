@@ -1,123 +1,113 @@
+
 # Wanyou
 
-Wanyou generates a weekly Tsinghua Physics campus briefing from multiple sources.
+æ¸åå¤§å­¦ç©çç³»âä¸æé¢æ¥âèªå¨çæé¡¹ç®ã
 
-It currently supports:
-- campus site crawlers
-- shared Tsinghua SSO login for protected sources
-- WeChat public account collection
-- LLM-assisted cleaning, summarization, and temporal filtering
-- Markdown / HTML / Browser Agent payload export
+## åè½æ¦è§
 
-## Requirements
+å½åæµç¨æ¯æï¼
+- æ ¡åç«ç¹ä¿¡æ¯æå
+- ç»ä¸è®¤è¯ç»å½ä¸å±äº«æµè§å¨ä¼è¯
+- å¬ä¼å·æåä¸æè¦è¾åº
+- LLM è¾å©æ¸æ´ãæè¦ãæ¶æå¤æ­
+- Markdown / HTML / Browser Agent payload å¯¼åº
+
+## ç¯å¢è¦æ±
 
 - Python 3.10+
 - Microsoft Edge
 - Edge WebDriver
-- `pandoc` if you need DOCX export
+- å¦éå¯¼åº DOCXï¼è¿éè¦æ¬æºå®è£ `pandoc`
 
-Install dependencies:
+å®è£ä¾èµï¼
 ```powershell
 python -m pip install -r requirements.txt
 python -m pip install PyYAML
 ```
 
-## Quick Start
+## å¿«éè¿è¡
 
-Public sources only:
+ä»è¿è¡å¬å¼æºç«ï¼
 ```powershell
 python skills/wanyou-full-run/scripts/run_wanyou_full_run.py --public-only --skip-docx
 ```
 
-Full run with login sources:
+è¿è¡å®æ´æµç¨ï¼
 ```powershell
 python skills/wanyou-full-run/scripts/run_wanyou_full_run.py --with-login
 ```
 
-## Login and Secondary Verification
+## ç»å½ä¸äºæ¬¡è®¤è¯
 
-The program now uses one shared Edge session for Tsinghua SSO.
-It logs in once, then reuses that session for both `Teaching Notices` and `MyHome Notices`.
+ç¨åºç°å¨åªåä¸æ¬¡æ¸åç»ä¸è®¤è¯ï¼ç¶åå¤ç¨åä¸ä¸ª Edge ä¼è¯æåæå¡åå®¶å­ç½ã
 
-Behavior:
-- the terminal asks for SSO username and password once
-- password input is masked
-- if Edge already has a valid login session, the program reuses it
+å¦æç»ä¸è®¤è¯è¿å¥äºæ¬¡è®¤è¯ï¼
+1. ç¨åºä¼ä¿çå¯è§ç Edge æµè§å¨çªå£
+2. ç¨æ·å¨æµè§å¨ä¸­æå¨å®æéªè¯
+3. åå°ç»ç«¯æåè½¦
+4. ç¨åºç»§ç»­æå
 
-If SSO enters secondary verification:
-1. the program keeps a visible Edge window open
-2. the user finishes verification manually in Edge
-3. the user returns to the terminal and presses Enter
-4. crawling continues
+## æ¥æç­éè§å
 
-## Date Filtering Strategy
+### é»è®¤æ¶é´éå¼
 
-This is the main behavior to know before using the tool.
+é»è®¤æåµä¸ï¼ç¨åºä¼æâè¿è¡æ­¤ç¨åºæ¶å»å¾åæ¨ 7 å¤©âä½ä¸ºæ¶é´éå¼ã
 
-### Default cutoff
+ä¾å¦ï¼
+- å¦æä½ å¨ `2026-04-08 15:30` è¿è¡
+- é»è®¤éå¼å°±æ¯ `2026-04-01 15:30`
+- æ©äºè¿ä¸ªæ¶é´çä¿¡æ¯ï¼ä¼å°½éå¨æåè¯¦æé¡µä¹åè¢«è·³è¿
 
-By default, the cutoff is `7 days before the moment the program starts`.
+### ç¨æ·èªå®ä¹éå¼
 
-Example:
-- if you run the program at `2026-04-08 15:30`
-- the default cutoff is `2026-04-01 15:30`
-- items older than that are skipped as early as possible
-
-### User-defined cutoff
-
-You can override the default in [config.py](./config.py):
+å¯ä»¥å¨ [config.py](./config.py) ä¸­éç½®ï¼
 
 ```python
 NOTICE_PREFILTER_CUTOFF = "2026-04-01 00:00"
 ```
 
-Rule priority:
-- if `NOTICE_PREFILTER_CUTOFF` is empty, use `now - 7 days`
-- if `NOTICE_PREFILTER_CUTOFF` is set, use the configured value
+ä¼åçº§è§åï¼
+- å¦æ `NOTICE_PREFILTER_CUTOFF` ä¸ºç©ºï¼ä½¿ç¨âå½åè¿è¡æ¶å»å¾å 7 å¤©â
+- å¦æ `NOTICE_PREFILTER_CUTOFF` æå¼ï¼ä¼åä½¿ç¨è¯¥å¼
 
-Accepted common formats:
+æ¯æçå¸¸è§æ ¼å¼ï¼
 - `2026-04-01 00:00`
 - `2026-04-01`
-- `2026?4?1? 00:00`
+- `2026å¹´4æ1æ¥ 00:00`
 
-### Early filtering behavior
+### åç½®è¿æ»¤è¡ä¸º
 
-The program tries to filter before fetching detail pages:
-- if a list page already shows a usable timestamp, it filters there first
-- if the title already appeared in the previous issue, it skips it there too
-- only items without usable list-level time info continue to the detail page
+ç¨åºä¼å°½éå¨âææ­£æåâåè¿æ»¤ï¼
+- å¦æåè¡¨é¡µå·²ç»è½çå°å¯ç¨æ¶é´æ³ï¼å°±åææ¶é´éå¼å¤æ­
+- å¦ææ é¢å·²ç»åºç°å¨ä¸ä¸æä¸æé¢æ¥ä¸­ï¼ä¹ä¼ç´æ¥è·³è¿
+- åªæåè¡¨é¡µçä¸åºæ¶é´æ¶ï¼æä¼ç»§ç»­æè¯¦æé¡µ
 
-This reduces:
-- unnecessary detail-page requests
-- unnecessary HTML cleaning
-- unnecessary LLM calls
+### ä¸ä¸æå»é
 
-### Previous issue deduplication
+ç¨åºä¼èªå¨è¯»åä¸ä¸ä»½ `wanyou_YYYYMMDD_HHMM.md`ï¼åæ ç®éå·²ç»åºç°è¿çæ é¢ï¼æ¬æé»è®¤ä¸åéå¤è¿å¥ç­éã
 
-The program automatically reads the previous generated `wanyou_YYYYMMDD_HHMM.md` and skips same-title items in the same section.
+## å½åæ ç®è¡ä¸º
 
-## Current Source Behavior
+- `æå¡éç¥`
+  - å·²ééæ°çæå¡éç¥é¡µ
+  - å¦æé¡µé¢æåæå¼ä½æ¬ææ²¡æç¬¦åæ¶é´çªå£çæ°éç¥ï¼ä¼æâæ¬ææ æææ°éç¥âå¤ç
+- `å®¶å­ç½ä¿¡æ¯`
+  - å¤ç¨ç»ä¸è®¤è¯ä¼è¯æå
+  - ä¼åå¨åè¡¨å±ææ¶é´è¿æ»¤
+- `å¾ä¹¦é¦ä¿¡æ¯`
+  - ä¼åæåè¡¨å¯è§æ¥æææ´»å¨æ¥æè¿æ»¤
+- `æ°æ¸åå­¦å `
+  - è¿ææ´»å¨æä¸ä¸æå·²åºç°çæ´»å¨ï¼ä¸åä¸è½½æµ·æ¥
+- `ç©çç³»å­¦æ¯æ¥å`
+  - åæåè¡¨æ¶é´åä¸ä¸ææ é¢è¿æ»¤
+  - å¦ææ¬ææ²¡ææ°å¢æ¥åï¼æâæ¬æææ æ°å¢æ¥åâå¤ç
+- `å¬ä¼å·ä¿¡æ¯`
+  - åæ API èªå¸¦æ¶é´æ³åä¸ä¸ææ é¢è¿æ»¤
+  - åªæä¿çä¸æ¥çæç« æç»§ç»­ææ­£æåçææè¦
 
-- `Teaching Notices`
-  - adapted to the new teaching notice page
-  - if the page opens successfully but there are no valid new notices in the current time window, it reports that as `no valid notices this issue`, not as a generic crawler failure
-- `MyHome Notices`
-  - reuses the shared SSO browser session
-  - filters by date as early as possible
-- `Library`
-  - filters by list-level notice date or event date before deeper processing when possible
-- `New Tsinghua Auditorium`
-  - skips outdated events and previously used titles before downloading posters
-- `Physics Reports`
-  - filters by list-level time and previous-issue titles first
-  - if there is no new report in the current window, it should be treated as `no new reports`, not as a crawler crash
-- `WeChat sources`
-  - filters by API timestamp and previous-issue title before content fetch
-  - only retained articles continue to full-content fetch and summary generation
+## LLM ç¸å³
 
-## LLM Usage
-
-Default model settings are in [config.py](./config.py):
+é»è®¤éç½®å¨ [config.py](./config.py)ï¼
 
 ```python
 LLM_ENABLED = True
@@ -125,54 +115,32 @@ LLM_PROVIDER = "deepseek"
 LLM_MODEL = "deepseek-chat"
 ```
 
-Common environment variables:
-```powershell
-$env:DEEPSEEK_API_KEY = "your-key"
-$env:OPENAI_API_KEY = "your-key"
-$env:GEMINI_API_KEY = "your-key"
-$env:ZHIPUAI_API_KEY = "your-key"
-$env:OCR_SPACE_API_KEY = "your-key"
-$env:WECHAT_PUBLIC_API_KEY = "your-key"
-```
+æææ¶å LLM çæ­¥éª¤é½ä¼è¾åºæ´ç»çè¿åº¦æç¤ºï¼ä¾å¦ï¼
+- `ç­å¾LLMè¾åºä¸­ï¼æ­£å¨å¤æ­æå¡éç¥æ¡ç®æ¶æ`
+- `ç­å¾LLMè¾åºä¸­ï¼æ­£å¨åç¼©åæ¡ä¿¡æ¯ç¯å¹`
+- `ç­å¾LLMè¾åºä¸­ï¼æ­£å¨æ»ç»å¬ä¼å·åå®¹`
+- `ç­å¾LLMè¾åºä¸­ï¼æ­£å¨æåå­¦æ¯æ¥åå­æ®µ`
 
-Runtime prompts for LLM steps are explicit, for example:
-- `Waiting for LLM: checking item freshness`
-- `Waiting for LLM: compressing a single item summary`
-- `Waiting for LLM: summarizing WeChat content`
-- `Waiting for LLM: extracting physics report fields`
+## å¬ä¼å·æå
 
-## WeChat Public Accounts
+å¬ä¼å·æåä½¿ç¨ `down.mptext.top` APIï¼ä¸ç´æ¥ç»å½å¾®ä¿¡ã
 
-WeChat collection uses the `down.mptext.top` API instead of direct WeChat login.
-
-Set:
+éè¦è®¾ç½®ï¼
 ```powershell
 $env:WECHAT_PUBLIC_API_KEY = "your-key"
 ```
 
-Run separately:
-```powershell
-python wechat_public.py
-```
+## è°è¯ä¸è¾åº
 
-Current behavior:
-- prefilter by timestamp and previous issue title
-- fetch content only for retained items
-- export summaries instead of full articles by default
+æ¯æ¬¡è¿è¡ä¼å¨ `output/<timestamp>/` çæäº§ç©ã
 
-## Debug Files
+éç¹ç®å½ï¼
+- `*_raw.md`
+- `*.md`
+- `*.html`
+- `debug/`
 
-Each run writes outputs to:
-```text
-output/<timestamp>/
-```
-
-Important debug directory:
-```text
-output/<timestamp>/debug/
-```
-
-Common files:
+`debug/` ä¸­å¸¸è§æä»¶åæ¬ï¼
 - `shared_login_attempt.txt`
 - `shared_after_login.html`
 - `shared_after_manual_auth.html`
@@ -181,31 +149,15 @@ Common files:
 - `info_llm_hint.json`
 - `myhome_after_login.html`
 
-Suggested debugging order:
-1. check authentication and page snapshots in `debug/`
-2. check `*_raw.md`
-3. check final `*.md` and `*.html`
+## æ¨èä½¿ç¨ç­ç¥
 
-## Outputs
+1. æ­£å¸¸å¨æ´åºæ¯ä¸ï¼ä¿æ `NOTICE_PREFILTER_CUTOFF = ""`
+2. åªæå¨è¡¥åå²ç¨¿ãéè·æä¸ææéè¦æå¨æ¹åæ¶é´çªå£æ¶ï¼åè®¾ç½® `NOTICE_PREFILTER_CUTOFF`
+3. å¦ææä¸ªæ ç®æç¤ºâæ¬ææ æ°å¢ä¿¡æ¯âï¼ä¼åæ£æ¥æ¯å¦è¢«æ¶é´éå¼æä¸ä¸æå»éè¿æ»¤æ
+4. çæ­£çç»ææ§é®é¢ï¼éå¸¸ä¼ä¼´éé¡µé¢å¿«ç§ãéæ©å¨å¤±è´¥æ `debug/` è¯æ­æä»¶
 
-Typical outputs:
-- `wanyou_<timestamp>_raw.md`
-- `wanyou_<timestamp>.md`
-- `wanyou_<timestamp>.html`
-- `wanyou_<timestamp>_agent.json`
-- `wanyou_<timestamp>.docx` if `pandoc` is installed
+## å·²ç¥é®é¢
 
-## Recommended User Strategy
-
-For normal weekly use:
-1. keep `NOTICE_PREFILTER_CUTOFF = ""`
-2. let the program use the default `now - 7 days` window
-3. only set a manual cutoff when backfilling an old issue or rerunning a special issue window
-4. if a section says there is no new content this issue, check time filtering and previous-issue deduplication before assuming the crawler is broken
-5. treat page-structure errors and `debug/` diagnostics as real crawler issues; treat `no new items in the current window` as a normal outcome
-
-## Known Issues
-
-- some sites do not expose usable timestamps on list pages, so the program still has to open detail pages before filtering
-- complex secondary verification may still require manual browser intervention
-- DOCX export still depends on local `pandoc`
+- æäºæºç«åè¡¨é¡µå®å¨ä¸æä¾å¯è§£ææ¶é´ï¼ä»éè¦è¿å¥è¯¦æé¡µ
+- ç»ä¸è®¤è¯éå°æ´å¤æçäºæ¬¡è®¤è¯æ¶ï¼ä»éè¦äººå·¥æ¥ç®¡
+- DOCX å¯¼åºä»ç¶ä¾èµæ¬æº `pandoc`
