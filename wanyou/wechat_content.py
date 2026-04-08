@@ -5,8 +5,8 @@ import time
 
 import html2text
 import requests
-
 import config
+from wanyou.utils_llm import multimodal_complete
 from wanyou.wechat_client import fetch_article_html, normalize_url
 
 
@@ -94,95 +94,32 @@ def _to_bool_str(value):
     return "true" if bool(value) else "false"
 
 
-def _llm_headers():
-    api_key_env = (
-        getattr(config, "WECHAT_IMAGE_LLM_API_KEY_ENV", "")
-        or getattr(config, "LLM_API_KEY_ENV", "")
-    )
-    if not api_key_env:
-        return None
-    api_key = os.environ.get(api_key_env, "").strip()
-    if not api_key:
-        return None
-    return {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-    }
-
-
-def _extract_llm_content(data):
-    try:
-        content = data["choices"][0]["message"]["content"]
-    except Exception:
-        return ""
-    if isinstance(content, str):
-        return content.strip()
-    if isinstance(content, list):
-        parts = []
-        for item in content:
-            if isinstance(item, dict):
-                text = str(item.get("text", "")).strip()
-                if text:
-                    parts.append(text)
-            elif isinstance(item, str):
-                text = item.strip()
-                if text:
-                    parts.append(text)
-        return "\n".join(parts).strip()
-    return ""
-
-
 def classify_image_type_with_llm(image_url):
     if not getattr(config, "WECHAT_IMAGE_LLM_ENABLED", False):
         return "OTHER"
 
-    headers = _llm_headers()
-    if not headers:
-        return "OTHER"
+    provider = getattr(config, "WECHAT_IMAGE_LLM_PROVIDER", "") or getattr(config, "LLM_PROVIDER", "")
+    model = getattr(config, "WECHAT_IMAGE_LLM_MODEL", "") or getattr(config, "LLM_MODEL", "")
+    api_key_env = getattr(config, "WECHAT_IMAGE_LLM_API_KEY_ENV", "") or getattr(config, "LLM_API_KEY_ENV", "")
+    base_url = getattr(config, "WECHAT_IMAGE_LLM_BASE_URL", "") or getattr(config, "LLM_BASE_URL", "")
 
-    base_url = (getattr(config, "WECHAT_IMAGE_LLM_BASE_URL", "") or config.LLM_BASE_URL).rstrip("/")
-    model = getattr(config, "WECHAT_IMAGE_LLM_MODEL", "") or config.LLM_MODEL
-    endpoint = f"{base_url}/chat/completions"
-    body = {
-        "model": model,
-        "temperature": 0,
-        "max_tokens": 8,
-        "messages": [
-            {
-                "role": "system",
-                "content": "你是图片分类器。只输出 TABLE、QRCODE 或 OTHER。",
-            },
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "text",
-                        "text": (
-                            "判断该图片是否为表格或二维码。"
-                            "若是表格输出 TABLE，若包含二维码输出 QRCODE，否则输出 OTHER。"
-                            "只能输出一个词。"
-                        ),
-                    },
-                    {"type": "image_url", "image_url": {"url": image_url}},
-                ],
-            },
-        ],
-    }
-    print(f"正在分类图片：{image_url}, LLM 请求头配置 {'已设置' if headers else '未设置'}")
-
-    try:
-        resp = requests.post(
-            endpoint,
-            headers=headers,
-            json=body,
-            timeout=getattr(config, "WECHAT_IMAGE_LLM_TIMEOUT_SECONDS", config.LLM_TIMEOUT_SECONDS),
-        )
-        resp.raise_for_status()
-        text = _extract_llm_content(resp.json()).upper()
-    except Exception:
-        return "OTHER"
-    print(f"正在分类图片：{image_url}, LLM 请求头配置 {'已设置' if headers else '未设置'}, 响应文本：{text}")
-
+    text = multimodal_complete(
+        "你是图片分类器。只输出 TABLE、QRCODE 或 OTHER。",
+        (
+            "判断该图片是否为表格或二维码。"
+            "若是表格输出 TABLE，若包含二维码输出 QRCODE，否则输出 OTHER。"
+            "只能输出一个词。"
+        ),
+        image_url,
+        provider=provider,
+        model=model,
+        api_key_env=api_key_env or None,
+        base_url=base_url or None,
+        timeout_seconds=getattr(config, "WECHAT_IMAGE_LLM_TIMEOUT_SECONDS", config.LLM_TIMEOUT_SECONDS),
+        max_tokens=8,
+        temperature=0,
+    )
+    text = (text or "").upper()
     if text.startswith("TABLE"):
         return "TABLE"
     if text.startswith("QRCODE"):
@@ -318,5 +255,3 @@ def enrich_items_with_content(session, items, timeout, sleep_seconds):
             item["content_error"] = str(exc)
         if sleep_seconds:
             time.sleep(sleep_seconds)
-        if idx % 10 == 0:
-            print(f"已抓取正文 {idx}/{len(items)}")

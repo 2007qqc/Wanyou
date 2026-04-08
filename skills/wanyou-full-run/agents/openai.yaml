@@ -1,0 +1,3 @@
+﻿interface:
+  display_name: "Wanyou Full Run"
+  short_description: "Run the full Wanyou pipeline and return final artifact paths"

@@ -1,0 +1,3 @@
+﻿interface:
+  display_name: "Wanyou LLM Filter"
+  short_description: "Debug keep-drop, summary, and transition logic"

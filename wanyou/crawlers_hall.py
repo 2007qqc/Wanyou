@@ -6,7 +6,7 @@ from selenium.common.exceptions import NoSuchElementException
 from urllib.parse import urljoin
 
 import config
-from wanyou.utils_dates import days_since_date
+from wanyou.utils_issue_filter import current_issue_cutoff, load_previous_titles, seen_in_previous_issue, should_skip_by_time
 from wanyou.utils_web import make_browser
 
 
@@ -14,73 +14,83 @@ def crawl_hall(doc, filename_jpg, base_images_dir):
     URL_MYHOMEs = config.URL_HALL_PAGES
 
     result = []
+    browser = make_browser()
 
-    for URL_MYHOME in URL_MYHOMEs:
-        browser = make_browser()
-        browser.get(URL_MYHOME)
+    try:
+        for URL_MYHOME in URL_MYHOMEs:
+            browser.get(URL_MYHOME)
 
-        events = browser.find_elements(By.CSS_SELECTOR, 'div.timemain_a')
+            events = browser.find_elements(By.CSS_SELECTOR, 'div.timemain_a')
 
-        for event in events:
-            try:
-                day_element = event.find_element(By.CSS_SELECTOR, 'b.size_40')
-                day = day_element.text.strip()
+            for event in events:
+                try:
+                    day_element = event.find_element(By.CSS_SELECTOR, 'b.size_40')
+                    day = day_element.text.strip()
 
-                year_month_script = """
-                var node = arguments[0].nextSibling;
-                while (node) {
-                    if (node.nodeType === Node.TEXT_NODE && node.textContent.trim() !== '') {
-                        return node.textContent.trim();
+                    year_month_script = """
+                    var node = arguments[0].nextSibling;
+                    while (node) {
+                        if (node.nodeType === Node.TEXT_NODE && node.textContent.trim() !== '') {
+                            return node.textContent.trim();
+                        }
+                        node = node.nextSibling;
                     }
-                    node = node.nextSibling;
-                }
-                return '';
-                """
-                year_month = browser.execute_script(year_month_script, day_element)
+                    return '';
+                    """
+                    year_month = browser.execute_script(year_month_script, day_element)
 
-                time_element = event.find_element(By.CSS_SELECTOR, 'b.size_bg')
-                time = time_element.text.strip()
+                    time_element = event.find_element(By.CSS_SELECTOR, 'b.size_bg')
+                    time = time_element.text.strip()
 
-                full_date = f"{year_month}-{day} {time}"
-            except NoSuchElementException:
-                full_date = "N/A"
+                    full_date = f"{year_month}-{day} {time}"
+                except NoSuchElementException:
+                    full_date = "N/A"
 
-            try:
-                title_element = event.find_element(By.CSS_SELECTOR, 'h3.yahei a')
-                title = title_element.text.strip()
-            except NoSuchElementException:
-                title = "N/A"
+                try:
+                    title_element = event.find_element(By.CSS_SELECTOR, 'h3.yahei a')
+                    title = title_element.text.strip()
+                except NoSuchElementException:
+                    title = "N/A"
 
-            try:
-                location_element = event.find_element(By.CSS_SELECTOR, 'li.add')
-                location = location_element.text.strip().replace('<br>', '')
-            except NoSuchElementException:
-                location = "N/A"
+                try:
+                    location_element = event.find_element(By.CSS_SELECTOR, 'li.add')
+                    location = location_element.text.strip().replace('<br>', '')
+                except NoSuchElementException:
+                    location = "N/A"
 
-            try:
-                price_element = event.find_element(By.CLASS_NAME, 'money')
-                price = price_element.text.strip().replace('<br>', '')
-            except NoSuchElementException:
-                price = "N/A"
+                try:
+                    price_element = event.find_element(By.CLASS_NAME, 'money')
+                    price = price_element.text.strip().replace('<br>', '')
+                except NoSuchElementException:
+                    price = "N/A"
 
-            img = event.find_element(By.TAG_NAME, 'img')
-            relative_src = img.get_attribute('src')
-            absolute_src = urljoin(browser.current_url, relative_src)
+                img = event.find_element(By.TAG_NAME, 'img')
+                relative_src = img.get_attribute('src')
+                absolute_src = urljoin(browser.current_url, relative_src)
 
-            result.append({
-                "date": full_date,
-                "title": title,
-                "location": location,
-                "price": price,
-                "absolute_src": absolute_src
-            })
+                result.append({
+                    "date": full_date,
+                    "title": title,
+                    "location": location,
+                    "price": price,
+                    "absolute_src": absolute_src
+                })
+    finally:
+        browser.quit()
 
     result_refined = []
     titles = []
+    cutoff = current_issue_cutoff()
+    previous_titles = load_previous_titles()
 
     for i, item in enumerate(result[::-1]):
-        date = (item["date"])[:10]
-        if (item["title"] not in titles) & (item["title"] not in config.HALL_NO_CONSIDER) & (-config.HALL_RECENT_DAYS < days_since_date(date) < 0):
+        date = (item["date"])[:16]
+        if (
+            (item["title"] not in titles)
+            and (item["title"] not in config.HALL_NO_CONSIDER)
+            and not seen_in_previous_issue(item["title"], previous_titles)
+            and not should_skip_by_time(date, cutoff)
+        ):
             headers={
                 'user-agent': config.USER_AGENT}
             re1=requests.get(item["absolute_src"], headers=headers)
@@ -105,10 +115,11 @@ def crawl_hall(doc, filename_jpg, base_images_dir):
                 if item_refined["title"] == item["title"]:
                     item_refined["date"].append(item["date"])
 
-    browser.quit()
     doc.write("# 新清华学堂\n\n")
+    markdown_dir = os.path.dirname(getattr(doc, "name", "")) or os.getcwd()
 
     for item in result_refined:
+        image_path = os.path.relpath(item["path"], start=markdown_dir).replace("\\", "/")
         doc.write(f"## {item['title']}\n\n")
         if len(item['date']) == 1:
             doc.write(f"日期: {(item['date'])[0]}\n\n")
@@ -118,4 +129,4 @@ def crawl_hall(doc, filename_jpg, base_images_dir):
                 doc.write(f"{date}\n\n")
         doc.write(f"地点: {item['location']}\n\n")
         doc.write('票价: \n{}\n\n'.format(re.sub('\n', '\n\n', item['price'])))
-        doc.write('![]({})\n\n'.format(item['path']))
+        doc.write(f"![]({image_path})\n\n")

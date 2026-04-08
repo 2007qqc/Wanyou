@@ -1,0 +1,3 @@
+﻿interface:
+  display_name: "Wanyou Campus Crawl"
+  short_description: "Fetch and debug campus-site sources for Wanyou"

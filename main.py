@@ -1,61 +1,331 @@
 import datetime
 import os
+import re
+import sys
+
 import pypandoc
 
 import config
-from wanyou.crawlers_info import crawl_info
-from wanyou.crawlers_myhome import crawl_myhome
-from wanyou.crawlers_lib import crawl_lib
+from generators.browser_agent import export_browser_agent_payload
+from generators.h5_generator import decorate_markdown_with_theme, export_h5
 from wanyou.crawlers_hall import crawl_hall
-from wanyou.wechat_pipeline import collect_wechat_items, write_md_stream
+from wanyou.crawlers_info import crawl_info
+from wanyou.crawlers_lib import crawl_lib
+from wanyou.crawlers_myhome import crawl_myhome
+from wanyou.crawlers_physics import crawl_physics
+from wanyou.synthesizer import build_augmented_markdown
+from wanyou.unified_auth import authenticate_shared_browser
 from wanyou.utils_auth import prompt_credentials
+from wanyou.wechat_pipeline import collect_wechat_items, write_sectioned_md_stream
 
 
-# 创建 md 文档
+REQUIRED_SECTIONS = [
+    "教务通知",
+    "家园网信息",
+    "图书馆信息",
+    "学生会信息",
+    "青年科协信息",
+    "学生社团信息",
+    "物理系学术报告",
+    "学生公益信息",
+]
 
-timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M")
-run_dir = os.path.join(config.OUTPUT_DIR, timestamp)
-os.makedirs(run_dir, exist_ok=True)
+STAGE_SECTION_MAP = {
+    "crawl_info": "教务通知",
+    "crawl_myhome": "家园网信息",
+}
 
-filenamemd = os.path.join(run_dir, f"{config.OUTPUT_NAME_PREFIX}_{timestamp}.md")
-filenamedocx = os.path.join(run_dir, f"{config.OUTPUT_NAME_PREFIX}_{timestamp}.docx")
-filename_jpg = f"_{config.OUTPUT_NAME_PREFIX}_{timestamp}"
-base_images_dir = os.path.join(run_dir, config.IMAGES_DIR_PREFIX)
 
-if config.LLM_LOG_PATH:
-    config.LLM_LOG_PATH = os.path.join(run_dir, "llm_decisions.jsonl")
+def _placeholder_section(section_name: str) -> str:
+    return f"# {section_name}\n\n## 占位卡片\n\n等待下次抓取结果。\n\n"
 
-username, password = prompt_credentials()
 
-with open(filenamemd, "w", encoding="utf-8") as doc:
-    crawl_info(doc, base_images_dir, username, password)
-    crawl_myhome(doc, base_images_dir, username, password)
-    crawl_lib(doc, base_images_dir)
-    crawl_hall(doc, filename_jpg, base_images_dir)
+def _error_placeholder_section(section_name: str, error_text: str) -> str:
+    return (
+        f"# {section_name}\n\n"
+        "## 占位卡片\n\n"
+        "本次抓取未成功。\n\n"
+        f"原因: {error_text}\n\n"
+    )
+
+
+def _ensure_required_sections(markdown_text: str) -> str:
+    text = markdown_text or ""
+    existing_sections = {
+        match.group(1).strip()
+        for match in re.finditer(r"^#\s+(.+?)\s*$", text, flags=re.M)
+    }
+    missing_sections = [section for section in REQUIRED_SECTIONS if section not in existing_sections]
+    if not missing_sections:
+        return text
+
+    suffix = "".join(_placeholder_section(section) for section in missing_sections)
+    if text and not text.endswith("\n"):
+        text += "\n"
+    return text + suffix
+
+
+def _append_stage_error_sections(markdown_text: str, stage_errors: dict) -> str:
+    text = markdown_text or ""
+    existing_sections = {
+        match.group(1).strip()
+        for match in re.finditer(r"^#\s+(.+?)\s*$", text, flags=re.M)
+    }
+    extra_sections = []
+    for stage_name, section_name in STAGE_SECTION_MAP.items():
+        error_text = (stage_errors.get(stage_name) or "").strip()
+        if error_text and section_name not in existing_sections:
+            extra_sections.append(_error_placeholder_section(section_name, error_text))
+            existing_sections.add(section_name)
+    if not extra_sections:
+        return text
+    if text and not text.endswith("\n"):
+        text += "\n"
+    return text + "".join(extra_sections)
+
+
+def _run_stage(stage_name: str, func, *args, **kwargs):
     try:
-        recent_days = getattr(config, "WECHAT_MAIN_RECENT_DAYS", 7)
-        items = collect_wechat_items(days_limit=recent_days)
-        if items:
-            write_md_stream(
-                items,
-                doc,
-                include_content=getattr(config, "WECHAT_FETCH_CONTENT", True),
-                header=f"# 公众号信息（最近{recent_days}天）",
-            )
+        func(*args, **kwargs)
+        return None
     except Exception as exc:
-        print(f"公众号抓取失败：{exc}")
+        message = _format_error_message(exc)
+        print(f"{stage_name} 失败: {message}")
+        return message
 
-pypandoc.convert_file(
-    filenamemd,
-    to="docx",
-    outputfile=filenamedocx,
-    extra_args=[
-        "--from",
-        "markdown+raw_html",
-        config.PANDOC_RESOURCE_PATH_TEMPLATE.format(images_dir=base_images_dir),
-        "--reference-doc",
-        "template.docx",
-    ],
-)
-# 保存文件（按时间戳命名，避免重复）
-print(f"文件已保存至：{filenamedocx}")
+
+def _format_error_message(exc: Exception) -> str:
+    message = getattr(exc, "msg", "") or str(exc) or exc.__class__.__name__
+    message = message.split("Stacktrace:", 1)[0].strip()
+    message = re.sub(r"\s+\(Session info:.*", "", message).strip()
+    return message or exc.__class__.__name__
+
+
+def _fallback_markdown(stage_errors: dict) -> str:
+    details = []
+    for stage_name, error_text in stage_errors.items():
+        if error_text:
+            details.append(f"- {stage_name}: {error_text}")
+    detail_block = "\n".join(details) if details else "- 无详细错误信息"
+    return (
+        "# 万有预报\n\n"
+        "## 本期说明\n\n"
+        "本次运行已完成富文本导出流程，但公开网站抓取未取得可用内容。"
+        "请检查网络连通性、校园站点可访问性或登录态后重试。\n\n"
+        "抓取阶段记录：\n\n"
+        f"{detail_block}\n\n"
+        "# 教务通知\n\n## 占位卡片\n\n等待下次抓取结果。\n\n"
+        "# 图书馆信息\n\n## 占位卡片\n\n等待下次抓取结果。\n\n"
+        "# 学生会信息\n\n## 占位卡片\n\n等待下次抓取结果。\n\n"
+        "# 青年科协信息\n\n## 占位卡片\n\n等待下次抓取结果。\n\n"
+        "# 学生社团信息\n\n## 占位卡片\n\n等待下次抓取结果。\n\n"
+        "# 家园网信息\n\n## 占位卡片\n\n等待下次抓取结果。\n\n"
+        "# 新清华学堂\n\n## 占位卡片\n\n等待下次抓取结果。\n\n"
+        "# 物理系学术报告\n\n## 占位卡片\n\n等待下次抓取结果。\n\n"
+        "# 学生公益信息\n\n## 占位卡片\n\n等待下次抓取结果。\n\n"
+        "# 其他公众号信息\n\n## 占位卡片\n\n等待下次抓取结果。\n"
+    )
+
+
+def convert_markdown_to_docx(markdown_path: str, docx_path: str, base_images_dir: str):
+    pypandoc.convert_file(
+        markdown_path,
+        to="docx",
+        outputfile=docx_path,
+        extra_args=[
+            "--from",
+            "markdown+raw_html",
+            config.PANDOC_RESOURCE_PATH_TEMPLATE.format(images_dir=base_images_dir),
+            "--reference-doc",
+            "template.docx",
+        ],
+    )
+
+
+def run_pipeline(
+    *,
+    username: str = "",
+    password: str = "",
+    info_username: str = "",
+    info_password: str = "",
+    myhome_username: str = "",
+    myhome_password: str = "",
+    public_only: bool = False,
+    include_wechat: bool = True,
+    synthesize: bool = True,
+    export_docx: bool = True,
+    export_html: bool = True,
+    export_agent_payload: bool = True,
+    run_dir: str = "",
+):
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M")
+    run_dir = run_dir or os.path.join(config.OUTPUT_DIR, timestamp)
+    os.makedirs(run_dir, exist_ok=True)
+
+    raw_markdown_path = os.path.join(run_dir, f"{config.OUTPUT_NAME_PREFIX}_{timestamp}_raw.md")
+    final_markdown_path = os.path.join(run_dir, f"{config.OUTPUT_NAME_PREFIX}_{timestamp}.md")
+    docx_path = os.path.join(run_dir, f"{config.OUTPUT_NAME_PREFIX}_{timestamp}.docx")
+    html_path = os.path.join(run_dir, f"{config.OUTPUT_NAME_PREFIX}_{timestamp}.html")
+    agent_payload_path = os.path.join(run_dir, f"{config.OUTPUT_NAME_PREFIX}_{timestamp}_agent.json")
+    filename_jpg = f"_{config.OUTPUT_NAME_PREFIX}_{timestamp}"
+    base_images_dir = os.path.join(run_dir, config.IMAGES_DIR_PREFIX)
+
+    if config.LLM_LOG_PATH:
+        config.LLM_LOG_PATH = os.path.join(run_dir, "llm_decisions.jsonl")
+
+    credentials = {
+        "info": {
+            "username": info_username or username,
+            "password": info_password or password,
+        },
+        "myhome": {
+            "username": myhome_username or username,
+            "password": myhome_password or password,
+        },
+    }
+
+    if not public_only and (
+        not credentials["info"]["username"]
+        or not credentials["info"]["password"]
+        or not credentials["myhome"]["username"]
+        or not credentials["myhome"]["password"]
+    ):
+        prompted = prompt_credentials()
+        for site_name in ("info", "myhome"):
+            credentials[site_name]["username"] = credentials[site_name]["username"] or prompted[site_name]["username"]
+            credentials[site_name]["password"] = credentials[site_name]["password"] or prompted[site_name]["password"]
+
+    stage_errors = {}
+
+    with open(raw_markdown_path, "w", encoding="utf-8") as doc:
+        if not public_only:
+            debug_dir = os.path.join(run_dir, "debug")
+            auth_username = credentials["info"]["username"] or credentials["myhome"]["username"]
+            auth_password = credentials["info"]["password"] or credentials["myhome"]["password"]
+            if (
+                credentials["info"]["username"]
+                and credentials["myhome"]["username"]
+                and credentials["info"]["username"] != credentials["myhome"]["username"]
+            ) or (
+                credentials["info"]["password"]
+                and credentials["myhome"]["password"]
+                and credentials["info"]["password"] != credentials["myhome"]["password"]
+            ):
+                print("检测到教务和家园网凭据不同；当前已改为共享统一认证，会优先使用教务凭据。")
+
+            shared_browser = None
+            auth_error = None
+            try:
+                shared_browser = authenticate_shared_browser(
+                    auth_username,
+                    auth_password,
+                    debug_dir,
+                    config.URL_INFO,
+                    stage_label="统一认证",
+                )
+            except Exception as exc:
+                auth_error = _format_error_message(exc)
+
+            if shared_browser is None:
+                stage_errors["crawl_info"] = auth_error or "统一认证失败"
+                stage_errors["crawl_myhome"] = auth_error or "统一认证失败"
+            else:
+                try:
+                    stage_errors["crawl_info"] = _run_stage(
+                        "crawl_info",
+                        crawl_info,
+                        doc,
+                        base_images_dir,
+                        browser=shared_browser,
+                    )
+                    stage_errors["crawl_myhome"] = _run_stage(
+                        "crawl_myhome",
+                        crawl_myhome,
+                        doc,
+                        base_images_dir,
+                        browser=shared_browser,
+                    )
+                finally:
+                    try:
+                        shared_browser.quit()
+                    except Exception:
+                        pass
+        stage_errors["crawl_lib"] = _run_stage("crawl_lib", crawl_lib, doc, base_images_dir)
+        stage_errors["crawl_hall"] = _run_stage("crawl_hall", crawl_hall, doc, filename_jpg, base_images_dir)
+        stage_errors["crawl_physics"] = _run_stage("crawl_physics", crawl_physics, doc, base_images_dir)
+
+        if include_wechat:
+            recent_days = getattr(config, "WECHAT_MAIN_RECENT_DAYS", 7)
+            try:
+                items = collect_wechat_items(days_limit=recent_days)
+                if items:
+                    write_sectioned_md_stream(
+                        items,
+                        doc,
+                        include_content=False,
+                    )
+            except Exception as exc:
+                print(f"公众号抓取失败: {_format_error_message(exc)}")
+
+    with open(raw_markdown_path, "r", encoding="utf-8") as f:
+        raw_markdown = f.read()
+    if not raw_markdown.strip():
+        raw_markdown = _fallback_markdown(stage_errors)
+    raw_markdown = _append_stage_error_sections(raw_markdown, stage_errors)
+    raw_markdown = _ensure_required_sections(raw_markdown)
+    with open(raw_markdown_path, "w", encoding="utf-8") as f:
+        f.write(raw_markdown)
+
+    final_markdown = build_augmented_markdown(raw_markdown, current_markdown_path=raw_markdown_path) if synthesize else raw_markdown
+    final_markdown = decorate_markdown_with_theme(final_markdown, final_markdown_path)
+    with open(final_markdown_path, "w", encoding="utf-8") as f:
+        f.write(final_markdown)
+
+    if export_docx and getattr(config, "OUTPUT_DOCX_ENABLED", True):
+        try:
+            convert_markdown_to_docx(final_markdown_path, docx_path, base_images_dir)
+        except Exception as exc:
+            print(f"DOCX 导出失败: {exc}")
+            docx_path = ""
+    else:
+        docx_path = ""
+
+    if export_html and getattr(config, "OUTPUT_H5_ENABLED", True):
+        export_h5(final_markdown_path, html_path, title=getattr(config, "H5_TITLE", "万有预报"))
+    else:
+        html_path = ""
+
+    if export_agent_payload and getattr(config, "OUTPUT_AGENT_PAYLOAD_ENABLED", True):
+        export_browser_agent_payload(final_markdown_path, agent_payload_path, html_path=html_path)
+    else:
+        agent_payload_path = ""
+
+    outputs = [f"Markdown: {final_markdown_path}"]
+    if docx_path:
+        outputs.append(f"DOCX: {docx_path}")
+    if html_path:
+        outputs.append(f"H5: {html_path}")
+    if agent_payload_path:
+        outputs.append(f"Agent payload: {agent_payload_path}")
+    print(" | ".join(outputs))
+
+    return {
+        "run_dir": run_dir,
+        "raw_markdown_path": raw_markdown_path,
+        "final_markdown_path": final_markdown_path,
+        "docx_path": docx_path,
+        "html_path": html_path,
+        "agent_payload_path": agent_payload_path,
+    }
+
+
+def main():
+    for stream_name in ("stdout", "stderr"):
+        stream = getattr(sys, stream_name, None)
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="replace")
+    run_pipeline()
+
+
+if __name__ == "__main__":
+    main()

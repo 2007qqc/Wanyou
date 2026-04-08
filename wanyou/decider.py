@@ -34,3 +34,12 @@ def should_copy_with_llm(site: str, title: str, date: str = "", snippet: str = "
         return rule
     context = build_context(site, title, date, snippet)
     return llm_decide_yes_no(context)
+
+
+def resolve_copy_decision(site: str, title: str, date: str = "", snippet: str = "") -> bool:
+    decision = should_copy_with_llm(site, title, date, snippet)
+    if decision is not None:
+        return bool(decision)
+    if getattr(config, "INTERACTIVE_REVIEW", False):
+        return input(f'是否拷贝"{title}"的信息 (y/n, default y)\n') != "n"
+    return bool(getattr(config, "DEFAULT_COPY_WHEN_UNDECIDED", True))
