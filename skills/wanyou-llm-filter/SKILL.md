@@ -1,20 +1,42 @@
----
+﻿---
 name: wanyou-llm-filter
-description: Apply keyword rules, LLM keep-drop decisions, summaries, and section transitions for Wanyou. Use when Codex needs to tune provider routing, explain why an item was kept or dropped, or debug summary quality.
+description: Apply Wanyou LLM keep/drop decisions, item compression, summaries, section transitions, and theme Markdown decoration to raw Markdown. Use when Codex needs to retest filtering prompts or summary quality without re-running crawlers.
 ---
 
 # Wanyou LLM Filter
 
-## Workflow
+## Purpose
 
-1. Check keyword rules in `config.py` first.
-2. Confirm the active provider and model in `config.py`.
-3. Use `wanyou/decider.py` for keep/drop behavior.
-4. Use `wanyou/synthesizer.py` for summaries and transitions.
-5. Keep `INTERACTIVE_REVIEW` off for one-run automation unless manual review is explicitly wanted.
+Use this skill after crawler modules have produced a raw Markdown file. It reads raw Markdown, applies LLM filtering and summaries, limits item length, and writes final Markdown.
+
+The current filtering policy is:
+
+- Keep only information published within one week before the Wanyou run.
+- Keep only information directly relevant to Tsinghua Physics undergraduates.
+- Pay special attention to timestamp, publisher, target audience, and body text.
+- For overloaded sections, keep at most 4 items.
+- WeChat is handled by the crawler module as latest 5 articles by publish time.
+
+## Commands
+
+```powershell
+python skills/wanyou-llm-filter/scripts/run_wanyou_llm_filter.py output/module_wechat_YYYYMMDD_HHMM/wanyou_wechat_raw.md
+```
+
+Choose a specific output path:
+
+```powershell
+python skills/wanyou-llm-filter/scripts/run_wanyou_llm_filter.py input_raw.md --output output/final.md
+```
+
+Skip theme decoration:
+
+```powershell
+python skills/wanyou-llm-filter/scripts/run_wanyou_llm_filter.py input_raw.md --no-theme
+```
 
 ## Debug Rules
 
-- If the model is not called, inspect `LLM_ENABLED`, provider, and API key env names.
-- If an undecided item is kept unexpectedly, inspect `DEFAULT_COPY_WHEN_UNDECIDED`.
-- Use [references/llm-routing.md](references/llm-routing.md) for routing notes.
+- If an item is kept unexpectedly, inspect `wanyou/decider.py` and `wanyou/synthesizer.py` prompts first.
+- If no LLM call happens, check `LLM_ENABLED`, provider settings, and API key environment variables.
+- If output is too long, inspect the item compression path in `wanyou/synthesizer.py`.

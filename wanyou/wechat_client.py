@@ -11,14 +11,19 @@ import config
 def _format_wechat_api_error(ret, err_msg):
     key_env = getattr(config, "WECHAT_PUBLIC_API_KEY_ENV", "WECHAT_PUBLIC_API_KEY")
     message = str(err_msg or "").strip()
+    lower_message = message.lower()
     if ret == -1:
-        return f"公众号 API 认证失败，请检查环境变量 {key_env} 是否有效"
+        return f"??? API ???????????? {key_env} ????"
     if ret in {401, 403}:
-        return f"公众号 API 无权限访问，请检查环境变量 {key_env} 的权限配置"
+        return f"??? API ????????????? {key_env} ?????"
+    if ret == 200003 or "invalid session" in lower_message:
+        return (
+            f"??? API ?????????????????? {key_env}?"
+            "????? down.mptext.top ??? session/key ????"
+        )
     if message:
         return f"{message} (ret={ret})"
-    return f"公众号 API 返回错误 (ret={ret})"
-
+    return f"??? API ???? (ret={ret})"
 
 def normalize_url(url):
     if not url:

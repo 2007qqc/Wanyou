@@ -1,4 +1,4 @@
-import datetime
+﻿import datetime
 import json
 import os
 import re
@@ -8,8 +8,11 @@ from wanyou.decider import apply_keyword_rules, should_copy_with_llm
 from wanyou.wechat_client import create_api_session, dedupe_items, fetch_articles, resolve_fakeids
 from wanyou.wechat_content import enrich_items_with_content
 from wanyou.utils_html import clean_crawled_markdown
-from wanyou.utils_issue_filter import current_issue_cutoff, load_previous_titles, seen_in_previous_issue
 from wanyou.utils_llm import chat_complete
+
+
+WECHAT_MAX_ITEMS = 5
+NO_WECHAT_MATCH_MESSAGE = "本期没有符合条件的最新公众号信息。"
 
 
 def format_datetime_text(item):
@@ -42,13 +45,13 @@ def _build_filter_snippet(item):
 
 
 def mark_items_for_md(items):
-    should_filter = getattr(config, "WECHAT_FILTER_MD_WITH_LLM", True)
+    should_filter = getattr(config, "WECHAT_FILTER_MD_WITH_LLM", False)
     fallback_keep = getattr(config, "WECHAT_FILTER_FALLBACK_KEEP", True)
 
     for item in items:
         if not should_filter:
             item["include_in_md"] = True
-            item["decision_source"] = "disabled"
+            item["decision_source"] = "latest_publish_time"
             continue
 
         title = item.get("title") or ""
@@ -70,40 +73,8 @@ def mark_items_for_md(items):
             item["decision_source"] = "llm"
 
 
-
-
-def _prefilter_issue_window(items):
-    cutoff = current_issue_cutoff()
-    previous_titles = load_previous_titles()
-    filtered = []
-    for item in items:
-        ts = item.get("timestamp")
-        if ts:
-            published_at = datetime.datetime.fromtimestamp(ts)
-            if published_at < cutoff:
-                continue
-        if seen_in_previous_issue(item.get("title") or "", previous_titles):
-            continue
-        filtered.append(item)
-    return filtered
-
-def _filter_recent_days(items, days_limit):
-    if not days_limit:
-        return items
-    cutoff = int((datetime.datetime.now() - datetime.timedelta(days=days_limit)).timestamp())
-    filtered = []
-    for item in items:
-        ts = item.get("timestamp")
-        if ts is None or ts >= cutoff:
-            filtered.append(item)
-    return filtered
-
-
 def _fallback_wechat_summary(item):
-    for candidate in (
-        item.get("digest") or "",
-        item.get("content") or "",
-    ):
+    for candidate in (item.get("digest") or "", item.get("content") or ""):
         cleaned = clean_crawled_markdown(candidate, source=item.get("title", "wechat"))
         if cleaned:
             cleaned = re.sub(r"\s+", " ", cleaned).strip()
@@ -137,7 +108,7 @@ def summarize_wechat_item(item):
         user_prompt,
         max_tokens=160,
         temperature=0.2,
-        task_label=f"\u6b63\u5728\u603b\u7ed3\u516c\u4f17\u53f7\u5185\u5bb9\uff1a{title[:24]}",
+        task_label=f"正在总结公众号内容：{title[:24]}",
     )
     if result:
         cleaned = re.sub(r"\s+", " ", result).strip()
@@ -166,12 +137,10 @@ def collect_wechat_items(days_limit=None):
 
     items = dedupe_items(items)
     items.sort(key=lambda item: item.get("timestamp") or 0, reverse=True)
-    items = _prefilter_issue_window(items)
-    items = _filter_recent_days(items, days_limit)
-
-    max_articles = getattr(config, "WECHAT_MAX_ARTICLES", 0)
-    if max_articles and len(items) > max_articles:
-        items = items[:max_articles]
+    if days_limit:
+        cutoff = int((datetime.datetime.now() - datetime.timedelta(days=days_limit)).timestamp())
+        items = [item for item in items if item.get("timestamp") is None or item.get("timestamp") >= cutoff]
+    items = items[:WECHAT_MAX_ITEMS]
 
     enrich_items_with_content(session, items, timeout, sleep_seconds)
     for item in items:
@@ -188,10 +157,12 @@ def write_md(items, output_path, include_content=True, header="# 其他公众号
 
 def write_md_stream(items, stream, include_content=True, header="# 其他公众号公开历史文章"):
     stream.write(f"{header}\n\n")
-    for item in items:
-        if not item.get("include_in_md", True):
-            continue
+    visible_items = [item for item in items if item.get("include_in_md", True)]
+    if not visible_items:
+        stream.write(f"## 占位卡片\n\n{NO_WECHAT_MATCH_MESSAGE}\n\n")
+        return
 
+    for item in visible_items:
         title = item.get("title") or "N/A"
         url = item.get("url") or "N/A"
         digest = item.get("digest") or ""
@@ -241,12 +212,8 @@ def _wechat_section_for_item(item):
     content = (item.get("content") or "").strip()
     text = "\n".join([account_keyword, title, digest, content]).lower()
 
-    welfare_keywords = [
-        "公益", "志愿", "志愿者", "支教", "捐赠", "义卖", "献血", "助残", "环保", "募捐", "慈善",
-    ]
-    club_keywords = [
-        "社团", "协会", "俱乐部", "招新", "百团", "工作坊", "学生组织", "兴趣小组",
-    ]
+    welfare_keywords = ["公益", "志愿", "志愿者", "支教", "捐赠", "义卖", "献血", "助残", "环保", "募捐", "慈善"]
+    club_keywords = ["社团", "协会", "俱乐部", "招新", "百团", "工作坊", "学生组织", "兴趣小组"]
 
     if any(keyword in text for keyword in welfare_keywords):
         return "学生公益信息"
@@ -273,16 +240,16 @@ def split_wechat_items_by_section(items):
 
 def write_sectioned_md_stream(items, stream, include_content=True):
     buckets = split_wechat_items_by_section(items)
+    wrote_any = False
     for section in WECHAT_SECTION_ORDER:
         section_items = buckets.get(section) or []
         if not section_items:
             continue
-        write_md_stream(
-            section_items,
-            stream,
-            include_content=False,
-            header=f"# {section}",
-        )
+        wrote_any = True
+        write_md_stream(section_items, stream, include_content=False, header=f"# {section}")
+    if not wrote_any:
+        stream.write("# 其他公众号信息\n\n")
+        stream.write(f"## 占位卡片\n\n{NO_WECHAT_MATCH_MESSAGE}\n\n")
 
 
 def write_json(items, output_path):

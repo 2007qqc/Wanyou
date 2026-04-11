@@ -1,5 +1,5 @@
+﻿import json
 import re
-import json
 from urllib.parse import urljoin
 
 import html2text
@@ -13,12 +13,34 @@ from wanyou.utils_llm import chat_complete
 from wanyou.utils_web import build_requests_session, make_browser
 
 
+DEFAULT_REPORT_KEYWORDS = [
+    "学术报告",
+    "学术讲座",
+    "报告",
+    "讲座",
+    "seminar",
+    "colloquium",
+    "lecture",
+]
+DEFAULT_LOCATION_KEYWORDS = ["W101", "W105", "物理楼", "理科楼"]
+
+
+def _config_keywords(name: str, fallback: list[str]) -> list[str]:
+    raw = getattr(config, name, None)
+    if not isinstance(raw, (list, tuple)):
+        return fallback
+    values = [str(item).strip() for item in raw if str(item).strip()]
+    if not values:
+        return fallback
+    return values + [item for item in fallback if item not in values]
+
+
 def _looks_like_report(title: str) -> bool:
     text = (title or "").strip()
     if not text:
         return False
-    keywords = list(config.PHYSICS_REPORT_FORCE_KEYWORDS) + list(config.PHYSICS_REPORT_LOCATION_KEYWORDS)
-    return any(keyword.lower() in text.lower() for keyword in keywords if keyword)
+    keywords = _config_keywords("PHYSICS_REPORT_FORCE_KEYWORDS", DEFAULT_REPORT_KEYWORDS)
+    return any(keyword.lower() in text.lower() for keyword in keywords)
 
 
 def _normalize_text(html_text: str) -> str:
@@ -33,8 +55,8 @@ def _normalize_text(html_text: str) -> str:
 
 def _text_quality_score(text: str) -> tuple[int, int, int]:
     chinese = len(re.findall(r"[\u4e00-\u9fff]", text))
-    keywords = len(re.findall(r"报告|题目|报告人|时间|地点|摘要|简介|物理楼", text))
-    mojibake = len(re.findall(r"[\u00c0-\u00ff]{2,}|�|ï»¿", text))
+    keywords = len(re.findall(r"报告|讲座|时间|地点|摘要|物理楼", text))
+    mojibake = len(re.findall(r"[\u00c0-\u00ff]{2,}|锟|�", text))
     return chinese + keywords * 2, -mojibake, -len(text)
 
 
@@ -53,7 +75,7 @@ def _clean_physics_text(text: str, title: str) -> str:
     for raw_line in (text or "").replace("\ufeff", "").splitlines():
         line = _repair_mojibake_line(raw_line.rstrip())
         line = line.replace("报告 人", "报告人").replace("报告  人", "报告人")
-        line = line.replace("内 容摘要", "内容摘要")
+        line = line.replace("内容摘要", "内容摘要")
         cleaned_lines.append(line)
 
     cleaned = "\n".join(cleaned_lines)
@@ -65,7 +87,7 @@ def _clean_physics_text(text: str, title: str) -> str:
     ]
     start_positions = [cleaned.find(marker) for marker in start_markers if marker and cleaned.find(marker) >= 0]
     if start_positions:
-        cleaned = cleaned[min(start_positions) :]
+        cleaned = cleaned[min(start_positions):]
 
     end_markers = [
         "\n## ",
@@ -79,10 +101,23 @@ def _clean_physics_text(text: str, title: str) -> str:
     ]
     end_positions = [cleaned.find(marker) for marker in end_markers if cleaned.find(marker) > 0]
     if end_positions:
-        cleaned = cleaned[: min(end_positions)]
+        cleaned = cleaned[:min(end_positions)]
 
     cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
     return cleaned.strip()
+
+
+def _extract_date(text: str) -> str:
+    match = re.search(r"(20\d{2}[-/.年]\d{1,2}[-/.月]\d{1,2}(?:日)?)", text or "")
+    if not match:
+        return ""
+    date_text = match.group(1)
+    date_text = date_text.replace("年", "-").replace("月", "-").replace("日", "")
+    date_text = date_text.replace("/", "-").replace(".", "-")
+    parts = [part.zfill(2) if index else part for index, part in enumerate(date_text.split("-"))]
+    if len(parts) >= 3:
+        return "-".join(parts[:3])
+    return ""
 
 
 def _extract_publish_date(title: str, content_text: str) -> str:
@@ -124,7 +159,7 @@ def _extract_report_fields_with_llm(title: str, publish_date: str, detail_url: s
         user_prompt,
         max_tokens=300,
         temperature=0,
-        task_label=f"\u6b63\u5728\u63d0\u53d6\u5b66\u672f\u62a5\u544a\u5b57\u6bb5\uff1a{title[:24]}",
+        task_label=f"正在提取学术报告字段：{title[:24]}",
     )
     return _extract_json_block(result or "")
 
@@ -133,10 +168,7 @@ def _build_report_body(title: str, publish_date: str, detail_url: str, cleaned_t
     extracted = _extract_report_fields_with_llm(title, publish_date, detail_url, cleaned_text)
 
     extracted_title = str(extracted.get("title") or "").strip()
-    if title and "：" in title and extracted_title and extracted_title in title:
-        final_title = title
-    else:
-        final_title = extracted_title or title
+    final_title = extracted_title or title
     speaker = str(extracted.get("speaker") or "").strip()
     event_time = str(extracted.get("time") or "").strip()
     location = str(extracted.get("location") or "").strip()
@@ -207,21 +239,6 @@ def _extract_main_html(html_text: str) -> str:
     return html_text
 
 
-def _extract_date(text: str) -> str:
-    match = re.search(r"(20\d{2}[-/.年]\d{1,2}[-/.月]\d{1,2})", text)
-    if not match:
-        return ""
-    date_text = match.group(1)
-    date_text = date_text.replace("年", "-").replace("月", "-").replace("日", "")
-    date_text = date_text.replace("/", "-").replace(".", "-")
-    parts = [part.zfill(2) if index else part for index, part in enumerate(date_text.split("-"))]
-    if len(parts) >= 3:
-        return "-".join(parts[:3])
-    return ""
-
-
-
-
 def _extract_list_date_from_link(link) -> str:
     candidates = []
     try:
@@ -238,6 +255,7 @@ def _extract_list_date_from_link(link) -> str:
         if match:
             return match.group(1)
     return ""
+
 
 def crawl_physics(doc, _base_images_dir):
     cutoff = current_issue_cutoff()
@@ -279,18 +297,16 @@ def crawl_physics(doc, _base_images_dir):
 
                 cleaned_text = _clean_physics_text(content_text, title)
                 publish_date = _extract_publish_date(title, cleaned_text or content_text)
-                date = publish_date
-                if date and should_skip_by_time(date, cutoff):
+                if publish_date and should_skip_by_time(publish_date, cutoff):
                     continue
                 if seen_in_previous_issue(title, previous_titles):
                     continue
 
                 location_hit = any(
-                    keyword.lower() in content_text.lower()
-                    for keyword in config.PHYSICS_REPORT_LOCATION_KEYWORDS
-                    if keyword
+                    keyword.lower() in (content_text or "").lower()
+                    for keyword in _config_keywords("PHYSICS_REPORT_LOCATION_KEYWORDS", DEFAULT_LOCATION_KEYWORDS)
                 )
-                decision = resolve_copy_decision("physics", title, date, content_text[:500])
+                decision = resolve_copy_decision("physics", title, publish_date, (content_text or "")[:500])
                 if not decision and not location_hit and not _looks_like_report((cleaned_text or content_text)[:200]):
                     continue
 
@@ -301,7 +317,7 @@ def crawl_physics(doc, _base_images_dir):
         browser.quit()
 
     if not titles:
-        print("Physics reports: no new reports found in the current time window")
+        print("物理系学术报告：本期时间窗口内没有新增报告")
         return
 
     doc.write("# 物理系学术报告\n\n")
