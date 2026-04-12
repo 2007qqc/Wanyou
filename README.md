@@ -141,8 +141,56 @@ python skills\wanyou-richtext-export\scripts\run_wanyou_richtext_export.py outpu
 python skills\wanyou-llm-filter\scripts\run_wanyou_llm_filter.py output\xxx\wanyou_xxx_raw.md
 ```
 
-## 公众号 API 环境变量
 
+## 保存到微信公众号草稿箱
+
+项目提供“只保存草稿、不自动发布”的脚本：
+
+```powershell
+python scripts\publish_wechat_draft.py output\xxx\wanyou_xxx.html --cover output\xxx\_theme\badge.png --title "万有预报"
+```
+
+建议先 dry-run，确认正文提取和图片路径正常，不实际调用微信接口：
+
+```powershell
+python scripts\publish_wechat_draft.py output\xxx\wanyou_xxx.html --dry-run
+```
+
+???????????
+
+```powershell
+python scripts\publish_wechat_draft.py output\xxx\wanyou_xxx.html --cover output\xxx\_theme\badge.png --dry-run
+```
+
+该脚本会：
+
+- 从 H5 HTML 中提取正文片段
+- 移除完整网页外壳和脚本样式标签
+- 上传正文中的本地图片，并替换为微信图片 URL
+- 上传封面图，获取 `thumb_media_id`
+- 调用微信公众号草稿箱接口，返回草稿 `media_id`
+
+保存草稿需要公众号官方后台的 AppID 和 AppSecret。它们和用于抓取公众号历史文章的 `WECHAT_PUBLIC_API_KEY` 不是同一个东西。
+
+临时设置：
+
+```powershell
+$env:WECHAT_MP_APPID = "your-appid"
+$env:WECHAT_MP_APPSECRET = "your-appsecret"
+```
+
+持久设置：
+
+```powershell
+[Environment]::SetEnvironmentVariable("WECHAT_MP_APPID", "your-appid", "User")
+[Environment]::SetEnvironmentVariable("WECHAT_MP_APPSECRET", "your-appsecret", "User")
+```
+
+写入后请重新打开 PowerShell 或 IDE 终端，再运行草稿脚本。公众号后台还需要把当前机器出口 IP 加入 IP 白名单，否则获取 `access_token` 可能失败。
+
+安全建议：先保存到草稿箱，在公众号后台人工预览确认后再发布，不建议一开始直接自动发布。
+
+## 公众号 API 环境变量
 公众号抓取使用 `down.mptext.top` API，不直接登录微信。程序读取环境变量：
 
 ```text

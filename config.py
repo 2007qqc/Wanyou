@@ -159,7 +159,6 @@ LLM_FORCE_NO_KEYWORDS = [
     "教师",
     "研究生",
     "博士生",
-    "停水",
 ]
 LLM_SYSTEM_PROMPT = (
     "你是清华大学物理系学生会的权益助理。"
