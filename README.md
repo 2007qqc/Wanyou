@@ -156,7 +156,7 @@ python scripts\publish_wechat_draft.py output\xxx\wanyou_xxx.html --cover output
 python scripts\publish_wechat_draft.py output\xxx\wanyou_xxx.html --dry-run
 ```
 
-???????????
+加上封面的dry-run示例：
 
 ```powershell
 python scripts\publish_wechat_draft.py output\xxx\wanyou_xxx.html --cover output\xxx\_theme\badge.png --dry-run
