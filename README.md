@@ -179,6 +179,7 @@ python scripts\publish_wechat_draft.py output\xxx\wanyou_xxx.html --dry-run
 ```
 
 如果要强制指定封面图：
+加上封面的dry-run示例：
 
 ```powershell
 python scripts\publish_wechat_draft.py output\xxx\wanyou_xxx.html --cover output\xxx\_theme\badge.png --dry-run
