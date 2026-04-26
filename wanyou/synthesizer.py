@@ -5,14 +5,18 @@ from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Set
 
 import config
+from wanyou.prompt_preferences import KEEP_DROP_PREFERENCE_RULES
 from wanyou.utils_llm import chat_complete
+from wanyou.filter_debug import configure_filter_debug_from_markdown, log_filter_decision
+from wanyou.run_clock import effective_run_date, effective_run_datetime
+from wanyou.temporal_filter import assess_temporal_relevance
 
 
 MAX_ITEMS_PER_SECTION = 4
 WECHAT_MAX_ITEMS = 5
 SUMMARY_HARD_LIMIT = 70
 ITEM_TOTAL_UNIT_LIMIT = 250
-NOW = dt.datetime.now()
+NOW = effective_run_datetime()
 PHYSICS_SECTION = "物理系学术报告"
 
 
@@ -51,8 +55,9 @@ def parse_markdown_document(markdown_text: str) -> List[dict]:
 
 
 def build_augmented_markdown(markdown_text: str, current_markdown_path: str = "") -> str:
+    configure_filter_debug_from_markdown(current_markdown_path)
     rendered_sections = []
-    previous_report_index = _load_previous_report_index(current_markdown_path)
+    previous_report_index = {}
 
     for section in parse_markdown_document(markdown_text):
         section_name = section["title"]
@@ -69,7 +74,17 @@ def build_augmented_markdown(markdown_text: str, current_markdown_path: str = ""
             )
 
         items = _remove_previous_issue_items(section_name, items, previous_report_index)
+        items = _filter_temporal_items(section_name, items)
         items = _filter_section_items(section_name, items)
+        for item in items:
+            log_filter_decision(
+                section=section_name,
+                title=item.get("title", ""),
+                status="kept",
+                reason="selected_for_final_markdown",
+                stage="synthesizer",
+                date=item.get("date", ""),
+            )
         enriched = _enrich_items(section_name, items)
         transition = _generate_transition(section_name, [item.get("summary", "") for item in enriched], bool(enriched))
 
@@ -89,50 +104,8 @@ def build_augmented_markdown(markdown_text: str, current_markdown_path: str = ""
 
 
 def _load_previous_report_index(current_markdown_path: str) -> Dict[str, Set[str]]:
-    output_dir = os.path.abspath(getattr(config, "OUTPUT_DIR", "./output"))
-    if not os.path.isdir(output_dir):
-        return {}
-
-    current_abs = os.path.abspath(current_markdown_path) if current_markdown_path else ""
-    current_ts = _extract_report_timestamp_from_path(current_abs)
-    prefix = f"{getattr(config, 'OUTPUT_NAME_PREFIX', 'wanyou')}_"
-    candidates = []
-    for root, _, files in os.walk(output_dir):
-        for name in files:
-            if not name.startswith(prefix) or not name.endswith(".md") or name.endswith("_raw.md"):
-                continue
-            full_path = os.path.abspath(os.path.join(root, name))
-            if current_abs and full_path == current_abs:
-                continue
-            report_ts = _extract_report_timestamp_from_path(full_path)
-            if report_ts is not None:
-                candidates.append((report_ts, full_path))
-
-    if not candidates:
-        return {}
-
-    candidates.sort(key=lambda pair: (pair[0], pair[1]), reverse=True)
-    chosen_path = ""
-    if current_ts is not None:
-        for report_ts, candidate_path in candidates:
-            if report_ts < current_ts:
-                chosen_path = candidate_path
-                break
-    if not chosen_path:
-        chosen_path = candidates[0][1]
-
-    try:
-        previous_text = Path(chosen_path).read_text(encoding="utf-8")
-    except Exception:
-        return {}
-
-    index: Dict[str, Set[str]] = {}
-    for section in parse_markdown_document(previous_text):
-        title_set = {_normalize_title_key(item.get("title", "")) for item in section.get("items", [])}
-        title_set = {title for title in title_set if title}
-        if title_set:
-            index[section["title"]] = title_set
-    return index
+    _ = current_markdown_path
+    return {}
 
 
 def _extract_report_timestamp_from_path(path_text: str) -> Optional[dt.datetime]:
@@ -153,14 +126,37 @@ def _normalize_title_key(title: str) -> str:
 
 
 def _remove_previous_issue_items(section_name: str, items: List[dict], previous_report_index: Dict[str, Set[str]]) -> List[dict]:
-    previous_titles = previous_report_index.get(section_name, set())
-    if not previous_titles:
-        return items
+    _ = section_name, previous_report_index
+    return items
+
+
+def _filter_temporal_items(section_name: str, items: List[dict]) -> List[dict]:
     filtered = []
     for item in items:
-        if _normalize_title_key(item.get("title", "")) in previous_titles:
-            continue
-        filtered.append(item)
+        title = item.get("title", "")
+        content = item.get("content", "")
+        publish_date = item.get("date", "")
+        assessment = assess_temporal_relevance(
+            text=f"{title}\n{content}",
+            fallback_publish_date=publish_date,
+            now=NOW,
+        )
+        log_filter_decision(
+            section=section_name,
+            title=title,
+            status="kept" if assessment.get("keep") else "dropped",
+            reason=str(assessment.get("reason") or "temporal_unknown"),
+            stage="temporal_filter",
+            date=publish_date,
+            details={
+                "basis": assessment.get("basis", ""),
+                "now": assessment.get("now", ""),
+                "cutoff": assessment.get("cutoff", ""),
+                "signals": assessment.get("signals", []),
+            },
+        )
+        if assessment.get("keep"):
+            filtered.append(item)
     return filtered
 
 
@@ -169,11 +165,43 @@ def _filter_section_items(section_name: str, items: List[dict]) -> List[dict]:
         return []
 
     if section_name == PHYSICS_SECTION:
-        items = [item for item in items if not _physics_item_is_expired(item)]
-        items.sort(key=lambda item: _extract_inline_datetime(item.get("content", "")) or dt.datetime.min, reverse=True)
-        return items[:MAX_ITEMS_PER_SECTION]
+        active_items = []
+        for item in items:
+            if _physics_item_is_expired(item):
+                log_filter_decision(
+                    section=section_name,
+                    title=item.get("title", ""),
+                    status="dropped",
+                    reason="expired_physics_event",
+                    stage="synthesizer_filter",
+                    date=item.get("date", ""),
+                )
+            else:
+                active_items.append(item)
+        active_items.sort(key=lambda item: _extract_inline_datetime(item.get("content", "")) or dt.datetime.min, reverse=True)
+        for item in active_items[MAX_ITEMS_PER_SECTION:]:
+            log_filter_decision(
+                section=section_name,
+                title=item.get("title", ""),
+                status="dropped",
+                reason="max_items_per_section",
+                stage="synthesizer_filter",
+                date=item.get("date", ""),
+                details={"limit": MAX_ITEMS_PER_SECTION},
+            )
+        return active_items[:MAX_ITEMS_PER_SECTION]
 
     if section_name == "其他公众号信息":
+        for item in items[WECHAT_MAX_ITEMS:]:
+            log_filter_decision(
+                section=section_name,
+                title=item.get("title", ""),
+                status="dropped",
+                reason="max_wechat_items",
+                stage="synthesizer_filter",
+                date=item.get("date", ""),
+                details={"limit": WECHAT_MAX_ITEMS},
+            )
         return items[:WECHAT_MAX_ITEMS]
 
     if len(items) <= MAX_ITEMS_PER_SECTION:
@@ -181,7 +209,29 @@ def _filter_section_items(section_name: str, items: List[dict]) -> List[dict]:
 
     selected = _select_items_with_llm(section_name, items, MAX_ITEMS_PER_SECTION)
     if selected:
+        selected_ids = {id(item) for item in selected}
+        for item in items:
+            if id(item) not in selected_ids:
+                log_filter_decision(
+                    section=section_name,
+                    title=item.get("title", ""),
+                    status="dropped",
+                    reason="llm_section_selection",
+                    stage="synthesizer_filter",
+                    date=item.get("date", ""),
+                    details={"limit": MAX_ITEMS_PER_SECTION},
+                )
         return selected
+    for item in items[MAX_ITEMS_PER_SECTION:]:
+        log_filter_decision(
+            section=section_name,
+            title=item.get("title", ""),
+            status="dropped",
+            reason="fallback_max_items_per_section",
+            stage="synthesizer_filter",
+            date=item.get("date", ""),
+            details={"limit": MAX_ITEMS_PER_SECTION},
+        )
     return items[:MAX_ITEMS_PER_SECTION]
 
 
@@ -238,13 +288,17 @@ def _select_items_with_llm(section_name: str, items: List[dict], limit: int) -> 
         )
 
     system_prompt = (
-        "????????????????????????"
-        "???????????????????? {limit} ??"
-        "???????????????????"
-        "??????????????????"
-        "????????????????????????????"
-        "???????????????????????????????????????"
-        '??? JSON???? {{"keep_indices": [1,2,3]}}?'
+        "你在为清华大学物理系本科生编辑每周《万有预报》。"
+        + "请从物理系本科生的角度，从候选条目中选出最应该保留的信息，最多 {limit} 条。"
+        + KEEP_DROP_PREFERENCE_RULES
+        + "候选条目通常已经经过前置时效筛选，因此不要机械地按发布时间远近排序。"
+        + "如果正文表明活动已结束、报名已截止、影响时间已过，即使该条目在候选列表中，也不要保留。"
+        + "优先保留课业相关信息，例如选课、排课、调课、调休、考试、培养方案、学籍和教务安排。"
+        + "优先保留学术与培养相关信息，例如校内培养计划、星火计划、SRT、科研训练、讲座、报告、暑校和奖助机会。"
+        + "优先保留物理系本科生可能参与或受影响的学生活动、学生权益、科创实践、志愿公益和校园生活信息。"
+        + "重点查看时间戳、发布者、面向群体，再结合正文内容判断。"
+        + "一般文化素质教育讲座、人文通识讲座、普通兴趣活动、组织宣传稿和围观型活动，通常应低于课业、物理学术和科研训练类信息。"
+        + '只输出 JSON，格式为 {{"keep_indices": [1,2,3]}}。'
     ).format(limit=limit)
     user_prompt = f"栏目: {section_name}\n\n" + "\n\n".join(candidates)
     result = chat_complete(
@@ -301,7 +355,7 @@ def _summarize_item(item: dict) -> str:
         ),
         f"标题: {title}\n来源: {item.get('source', '')}\n正文:\n{content[:2500]}",
         max_tokens=180,
-        temperature=0.2,
+        temperature=0,
         task_label=f"正在压缩单条信息篇幅：{title[:24]}",
     )
     return _clip_units(_clean_text(result or fallback), SUMMARY_HARD_LIMIT)
@@ -323,7 +377,7 @@ def _compress_item_content(item: dict, summary: str) -> str:
             ),
             f"标题: {item.get('title', '')}\n正文:\n{content[:3500]}",
             max_tokens=300,
-            temperature=0.2,
+            temperature=0,
             task_label=f"正在压缩正文内容：{item.get('title', '')[:24]}",
         )
         if result:
@@ -344,7 +398,7 @@ def _clean_text(text: str) -> str:
 
 
 def _estimate_units(text: str) -> int:
-    chinese = len(re.findall(r"[\u4e00-\u9fff]", text or ""))
+    chinese = len(re.findall(r"[一-鿿]", text or ""))
     english = len(re.findall(r"[A-Za-z0-9_]+", text or ""))
     return chinese + english
 
@@ -352,10 +406,10 @@ def _estimate_units(text: str) -> int:
 def _clip_units(text: str, limit: int) -> str:
     result = []
     units = 0
-    for token in re.finditer(r"[\u4e00-\u9fff]|[A-Za-z0-9_]+|\s+|.", text or ""):
+    for token in re.finditer(r"[一-鿿]|[A-Za-z0-9_]+|\s+|.", text or ""):
         part = token.group(0)
         part_units = 0
-        if re.fullmatch(r"[\u4e00-\u9fff]", part):
+        if re.fullmatch(r"[一-鿿]", part):
             part_units = 1
         elif re.fullmatch(r"[A-Za-z0-9_]+", part):
             part_units = 1
@@ -385,7 +439,7 @@ def _generate_transition(section_name: str, summaries: Iterable[str], has_items:
             getattr(config, "LLM_TRANSITION_SYSTEM_PROMPT", "请写一句栏目导语。"),
             f"栏目: {section_name}\n{joined}",
             max_tokens=80,
-            temperature=0.4,
+            temperature=0,
             task_label=f"正在生成栏目导语：{section_name}",
         )
         if result:

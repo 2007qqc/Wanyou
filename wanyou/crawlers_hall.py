@@ -7,6 +7,7 @@ from selenium.common.exceptions import NoSuchElementException
 from selenium.webdriver.common.by import By
 
 import config
+from wanyou.filter_debug import log_filter_decision
 from wanyou.utils_issue_filter import load_previous_titles, seen_in_previous_issue
 from wanyou.utils_web import make_browser
 
@@ -42,6 +43,7 @@ def crawl_hall(doc, filename_jpg, base_images_dir):
                 img = event.find_element(By.TAG_NAME, "img")
                 absolute_src = urljoin(browser.current_url, img.get_attribute("src"))
                 result.append({"date": full_date, "title": title, "location": location, "price": price, "absolute_src": absolute_src})
+                log_filter_decision(section="hall", title=title, status="found", reason="list_item", stage="crawler_hall", date=full_date, url=browser.current_url)
     finally:
         browser.quit()
 
@@ -49,27 +51,34 @@ def crawl_hall(doc, filename_jpg, base_images_dir):
     titles = []
     previous_titles = load_previous_titles()
     for i, item in enumerate(result[::-1]):
-        if item["title"] in titles or item["title"] in config.HALL_NO_CONSIDER:
+        if item["title"] in titles:
             for item_refined in result_refined:
                 if item_refined["title"] == item["title"]:
                     item_refined["date"].append(item["date"])
+            log_filter_decision(section="hall", title=item["title"], status="dropped", reason="duplicate_title", stage="crawler_hall_refine", date=item.get("date", ""))
+            continue
+        if (not getattr(config, "RAW_COLLECTION_MODE", False)) and item["title"] in config.HALL_NO_CONSIDER:
+            log_filter_decision(section="hall", title=item["title"], status="dropped", reason="site_blacklist", stage="crawler_hall_refine", date=item.get("date", ""))
             continue
         if seen_in_previous_issue(item["title"], previous_titles):
+            log_filter_decision(section="hall", title=item["title"], status="dropped", reason="previous_issue", stage="crawler_hall_refine", date=item.get("date", ""))
             continue
-        response = requests.get(item["absolute_src"], headers={"user-agent": config.USER_AGENT})
-        poster_dir = os.path.join(base_images_dir, filename_jpg)
-        os.makedirs(poster_dir, exist_ok=True)
-        path = os.path.join(poster_dir, f"{i}.jpg")
-        with open(path, "wb") as f:
-            for chunk in response.iter_content(chunk_size=128):
-                f.write(chunk)
+        path = ""
+        if not getattr(config, "RAW_COLLECTION_MODE", False):
+            response = requests.get(item["absolute_src"], headers={"user-agent": config.USER_AGENT})
+            poster_dir = os.path.join(base_images_dir, filename_jpg)
+            os.makedirs(poster_dir, exist_ok=True)
+            path = os.path.join(poster_dir, f"{i}.jpg")
+            with open(path, "wb") as f:
+                for chunk in response.iter_content(chunk_size=128):
+                    f.write(chunk)
         titles.append(item["title"])
         result_refined.append({"date": [item["date"]], "title": item["title"], "location": item["location"], "price": item["price"], "path": path})
+        log_filter_decision(section="hall", title=item["title"], status="kept", reason="crawler_selected", stage="crawler_hall_refine", date=item.get("date", ""))
 
     doc.write("# 新清华学堂\n\n")
     markdown_dir = os.path.dirname(getattr(doc, "name", "")) or os.getcwd()
     for item in result_refined:
-        image_path = os.path.relpath(item["path"], start=markdown_dir).replace("\\", "/")
         doc.write(f"## {item['title']}\n\n")
         if len(item["date"]) == 1:
             doc.write(f"日期: {item['date'][0]}\n\n")
@@ -79,4 +88,6 @@ def crawl_hall(doc, filename_jpg, base_images_dir):
                 doc.write(f"{date}\n\n")
         doc.write(f"地点: {item['location']}\n\n")
         doc.write(f"票价:\n{re.sub('\\n', '\\n\\n', item['price'])}\n\n")
-        doc.write(f"![]({image_path})\n\n")
+        if item.get("path"):
+            image_path = os.path.relpath(item["path"], start=markdown_dir).replace("\\", "/")
+            doc.write(f"![]({image_path})\n\n")

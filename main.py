@@ -13,6 +13,8 @@ from wanyou.crawlers_info import crawl_info
 from wanyou.crawlers_lib import crawl_lib
 from wanyou.crawlers_myhome import crawl_myhome
 from wanyou.crawlers_physics import crawl_physics
+from wanyou.filter_debug import configure_filter_debug, finalize_filter_debug
+from wanyou.raw_ranker import build_ranked_raw_markdown, build_selected_raw_markdown_from_ranked
 from wanyou.synthesizer import build_augmented_markdown
 from wanyou.unified_auth import authenticate_shared_browser
 from wanyou.utils_auth import prompt_credentials
@@ -156,19 +158,41 @@ def run_pipeline(
     export_docx: bool = True,
     export_html: bool = True,
     export_agent_payload: bool = True,
+    ranked_raw: bool = False,
+    ranked_raw_skip_clean: bool = False,
+    todo_richtext: bool = False,
     run_dir: str = "",
 ):
+    previous_raw_collection_mode = getattr(config, "RAW_COLLECTION_MODE", False)
+    previous_raw_skip_llm_clean = getattr(config, "RAW_SKIP_LLM_CLEAN", False)
+    if ranked_raw_skip_clean:
+        ranked_raw = True
+    if ranked_raw:
+        config.RAW_COLLECTION_MODE = True
+        config.RAW_SKIP_LLM_CLEAN = bool(ranked_raw_skip_clean)
+        synthesize = False
+        export_docx = False
+        export_html = False
+        export_agent_payload = False
+
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M")
     run_dir = run_dir or os.path.join(config.OUTPUT_DIR, timestamp)
     os.makedirs(run_dir, exist_ok=True)
+    configure_filter_debug(os.path.join(run_dir, "debug"), reset=True)
 
     raw_markdown_path = os.path.join(run_dir, f"{config.OUTPUT_NAME_PREFIX}_{timestamp}_raw.md")
     final_markdown_path = os.path.join(run_dir, f"{config.OUTPUT_NAME_PREFIX}_{timestamp}.md")
     docx_path = os.path.join(run_dir, f"{config.OUTPUT_NAME_PREFIX}_{timestamp}.docx")
     html_path = os.path.join(run_dir, f"{config.OUTPUT_NAME_PREFIX}_{timestamp}.html")
     agent_payload_path = os.path.join(run_dir, f"{config.OUTPUT_NAME_PREFIX}_{timestamp}_agent.json")
+    ranked_raw_path = os.path.join(run_dir, f"{config.OUTPUT_NAME_PREFIX}_{timestamp}_ranked_raw.md")
+    todo_selected_raw_path = os.path.join(run_dir, f"{config.OUTPUT_NAME_PREFIX}_{timestamp}_todo_selected_raw.md")
+    if ranked_raw_skip_clean:
+        ranked_raw_path = os.path.join(run_dir, f"{config.OUTPUT_NAME_PREFIX}_{timestamp}_ranked_raw_no_clean.md")
     filename_jpg = f"_{config.OUTPUT_NAME_PREFIX}_{timestamp}"
     base_images_dir = os.path.join(run_dir, config.IMAGES_DIR_PREFIX)
+
+    collect_full_content = ranked_raw or todo_richtext
 
     if config.LLM_LOG_PATH:
         config.LLM_LOG_PATH = os.path.join(run_dir, "llm_decisions.jsonl")
@@ -262,22 +286,52 @@ def run_pipeline(
                     write_sectioned_md_stream(
                         items,
                         doc,
-                        include_content=False,
+                        include_content=collect_full_content,
                     )
             except Exception as exc:
                 print(f"公众号抓取失败: {_format_error_message(exc)}")
 
     with open(raw_markdown_path, "r", encoding="utf-8") as f:
         raw_markdown = f.read()
-    if not raw_markdown.strip():
+    if not raw_markdown.strip() and not ranked_raw:
         raw_markdown = _fallback_markdown(stage_errors)
-    raw_markdown = _append_stage_error_sections(raw_markdown, stage_errors)
-    raw_markdown = _ensure_required_sections(raw_markdown)
+    if not ranked_raw:
+        raw_markdown = _append_stage_error_sections(raw_markdown, stage_errors)
+        raw_markdown = _ensure_required_sections(raw_markdown)
     with open(raw_markdown_path, "w", encoding="utf-8") as f:
         f.write(raw_markdown)
 
-    final_markdown = build_augmented_markdown(raw_markdown, current_markdown_path=raw_markdown_path) if synthesize else raw_markdown
-    final_markdown = decorate_markdown_with_theme(final_markdown, final_markdown_path)
+    if ranked_raw:
+        final_markdown = build_ranked_raw_markdown(
+            raw_markdown,
+            current_markdown_path=raw_markdown_path,
+            clean_with_llm=not ranked_raw_skip_clean,
+        )
+        final_markdown_path = ranked_raw_path
+    elif todo_richtext:
+        print("正在生成 ranked raw，为最终富文本挑选各版块高分信息...")
+        ranked_markdown = build_ranked_raw_markdown(
+            raw_markdown,
+            current_markdown_path=raw_markdown_path,
+            clean_with_llm=True,
+        )
+        with open(ranked_raw_path, "w", encoding="utf-8") as f:
+            f.write(ranked_markdown)
+
+        print("正在按 README TODO 标准选取各版块 3-5 条核心信息...")
+        selected_raw_markdown = build_selected_raw_markdown_from_ranked(ranked_markdown)
+        with open(todo_selected_raw_path, "w", encoding="utf-8") as f:
+            f.write(selected_raw_markdown)
+
+        print("正在将入选条目合成为最终富文本万有预报...")
+        final_markdown = build_augmented_markdown(
+            selected_raw_markdown,
+            current_markdown_path=todo_selected_raw_path,
+        ) if synthesize else selected_raw_markdown
+        final_markdown = decorate_markdown_with_theme(final_markdown, final_markdown_path)
+    else:
+        final_markdown = build_augmented_markdown(raw_markdown, current_markdown_path=raw_markdown_path) if synthesize else raw_markdown
+        final_markdown = decorate_markdown_with_theme(final_markdown, final_markdown_path)
     with open(final_markdown_path, "w", encoding="utf-8") as f:
         f.write(final_markdown)
 
@@ -300,14 +354,23 @@ def run_pipeline(
     else:
         agent_payload_path = ""
 
+    filter_summary_path = finalize_filter_debug()
+
     outputs = [f"Markdown: {final_markdown_path}"]
+    if todo_richtext:
+        outputs.append(f"Ranked raw: {ranked_raw_path}")
+        outputs.append(f"Selected raw: {todo_selected_raw_path}")
     if docx_path:
         outputs.append(f"DOCX: {docx_path}")
     if html_path:
         outputs.append(f"H5: {html_path}")
     if agent_payload_path:
         outputs.append(f"Agent payload: {agent_payload_path}")
+    if filter_summary_path:
+        outputs.append(f"Filter debug: {filter_summary_path}")
     print(" | ".join(outputs))
+    config.RAW_COLLECTION_MODE = previous_raw_collection_mode
+    config.RAW_SKIP_LLM_CLEAN = previous_raw_skip_llm_clean
 
     return {
         "run_dir": run_dir,
@@ -316,6 +379,11 @@ def run_pipeline(
         "docx_path": docx_path,
         "html_path": html_path,
         "agent_payload_path": agent_payload_path,
+        "filter_debug_path": os.path.join(run_dir, "debug", "filter_decisions.jsonl"),
+        "filter_summary_path": filter_summary_path,
+        "ranked_raw_path": ranked_raw_path if (ranked_raw or todo_richtext) else "",
+        "ranked_raw_skip_clean": ranked_raw_skip_clean,
+        "todo_selected_raw_path": todo_selected_raw_path if todo_richtext else "",
     }
 
 

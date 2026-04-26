@@ -148,11 +148,15 @@ def restore_tables(text, tables):
 def html_to_markdown(container, base_url, session, images_dir, image_counter, image_prefix, referer):
     container_html = container.get_attribute("outerHTML")
     container_html = normalize_resource_urls(container_html, base_url)
-    container_html = download_images_and_rewrite(
-        container_html, base_url, session, images_dir, image_counter, image_prefix, referer
-    )
+    if getattr(config, "RAW_COLLECTION_MODE", False):
+        container_html = re.sub(r"<img\b[^>]*>", "", container_html, flags=re.I)
+    else:
+        container_html = download_images_and_rewrite(
+            container_html, base_url, session, images_dir, image_counter, image_prefix, referer
+        )
 
     handler = html2text.HTML2Text()
+    handler.ignore_images = bool(getattr(config, "RAW_COLLECTION_MODE", False))
     handler.body_width = 0
     handler.single_line_break = True
     handler.bypass_tables = True
@@ -237,6 +241,8 @@ def clean_crawled_markdown(text, source=""):
     cleaned = _rule_clean_markdown(text)
     if not cleaned:
         return ""
+    if getattr(config, "RAW_SKIP_LLM_CLEAN", False):
+        return cleaned
 
     prompt = (
         "Clean the Markdown formatting without changing facts.\n"

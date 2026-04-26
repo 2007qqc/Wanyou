@@ -15,6 +15,7 @@ from wanyou.crawlers_info import crawl_info
 from wanyou.crawlers_lib import crawl_lib
 from wanyou.crawlers_myhome import crawl_myhome
 from wanyou.crawlers_physics import crawl_physics
+from wanyou.filter_debug import configure_filter_debug, finalize_filter_debug
 from wanyou.synthesizer import build_augmented_markdown
 from wanyou.unified_auth import authenticate_shared_browser
 from wanyou.utils_auth import prompt_credentials
@@ -53,7 +54,7 @@ def _write_outputs(run_dir: str, module: str, raw_text: str, synthesize: bool, e
     pathlib.Path(final_path).write_text(final_text, encoding="utf-8")
 
     if export_html:
-        markdown_to_h5_html(final_text, final_path, html_path, title=f"万有预报-{module}")
+        export_h5(final_path, html_path, title=f"万有预报-{module}")
     else:
         html_path = ""
 
@@ -89,7 +90,7 @@ def _run_login_modules(modules: list[str], doc, images_dir: str):
         password,
         debug_dir=os.path.join(os.path.dirname(images_dir), "debug"),
         initial_url=config.URL_INFO,
-        stage_label="??????",
+        stage_label="统一身份认证",
     )
     try:
         if "info" in modules:
@@ -137,6 +138,7 @@ def main():
             modules.append(module)
 
     run_dir, images_dir = _make_run_dir("_".join(modules))
+    configure_filter_debug(os.path.join(run_dir, "debug"), reset=True)
     raw_parts = []
 
     class _Buffer:
@@ -155,6 +157,9 @@ def main():
     raw_text = "".join(raw_parts).strip() + "\n"
     export_html = args.with_richtext or not (args.md_only or args.skip_html)
     _write_outputs(run_dir, "_".join(modules), raw_text, synthesize=not args.raw_only, export_html=export_html)
+    summary_path = finalize_filter_debug()
+    if summary_path:
+        print(f"filter_debug_summary_path: {summary_path}")
 
 
 if __name__ == "__main__":

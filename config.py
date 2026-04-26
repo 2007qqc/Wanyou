@@ -2,6 +2,8 @@
 集中管理可调参数。
 """
 
+from wanyou.prompt_preferences import KEEP_DROP_PREFERENCE_RULES
+
 # 登录凭据改为运行时输入，不在配置中保存。
 
 # Selenium 选项
@@ -72,6 +74,8 @@ OUTPUT_H5_ENABLED = True
 OUTPUT_AGENT_PAYLOAD_ENABLED = True
 OUTPUT_HTML_NAME_SUFFIX = ".html"
 H5_TITLE = "万有预报"
+RAW_COLLECTION_MODE = False
+RAW_SKIP_LLM_CLEAN = False
 
 # 公众号抓取相关（down.mptext.top API）
 WECHAT_PUBLIC_API_BASE_URL = "https://down.mptext.top/api/public/v1"
@@ -102,6 +106,7 @@ WECHAT_COOKIE_ENV = "WECHAT_COOKIE"
 WECHAT_COOKIE_PROMPT = True
 WECHAT_REQUEST_TIMEOUT = 15
 WECHAT_SLEEP_SECONDS = 1
+WECHAT_DOWNLOAD_MAX_WORKERS = 16
 WECHAT_OCR_ENABLED = True
 WECHAT_OCR_SPACE_URL = "https://api.ocr.space/parse/imageurl"
 WECHAT_OCR_SPACE_API_KEY_ENV = "OCR_SPACE_API_KEY"
@@ -162,10 +167,11 @@ LLM_FORCE_NO_KEYWORDS = [
 ]
 LLM_SYSTEM_PROMPT = (
     "你是清华大学物理系学生会的权益助理。"
-    "请根据标题、日期、站点和摘要判断该信息是否值得进入“万有预报”。"
-    "优先保留物理系相关信息、全校性重大教务安排、奖学金、SRT、选退课和讲座。"
-    "优先剔除教师招聘、纯研究生通知、重复公示和影响范围很小的临时信息。"
-    "只输出 YES 或 NO，不要输出其他内容。"
+    + "请根据标题、日期、站点和摘要判断该信息是否值得进入“万有预报”。"
+    + KEEP_DROP_PREFERENCE_RULES
+    + "优先保留物理系相关信息、全校性重大教务安排、奖学金、SRT、选退课和高价值学术活动。"
+    + "优先剔除教师招聘、纯研究生通知、重复公示、一般通识讲座和影响范围很小的临时信息。"
+    + "只输出 YES 或 NO，不要输出其他内容。"
 )
 
 # LLM 内容合成
@@ -204,3 +210,7 @@ XIUMI_TEMPLATE_SLOTS = {
     "lead": "slot-lead",
     "body": "slot-body",
 }
+XIUMI_EDITOR_URL = "https://xiumi.us/studio/v5?lang=zh_CN#/paper/for/new"
+XIUMI_PROFILE_DIR = "./output/selenium_cache/xiumi-profile"
+XIUMI_LOGIN_WAIT_SECONDS = 600
+XIUMI_SAVE_WAIT_SECONDS = 30

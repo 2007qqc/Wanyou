@@ -17,7 +17,7 @@ This repository is organized as an agent pipeline. Each stage can be debugged al
 `Richtext Export`
 - Code: `generators/h5_generator.py`, `generators/browser_agent.py`
 - Skill: `skills/wanyou-richtext-export`
-- Responsibility: turn Markdown into H5 HTML and browser-agent payload, and optionally DOCX.
+- Responsibility: turn Markdown into H5 HTML and browser-agent payload, optionally DOCX, and support forwarding final HTML/Markdown into Xiumi draft editing.
 
 `Full Run`
 - Code: `main.py`

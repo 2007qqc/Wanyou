@@ -1,3 +1,4 @@
+import concurrent.futures
 import html
 import os
 import re
@@ -227,31 +228,100 @@ def fetch_article_detail(session, url, timeout, sleep_seconds):
     html_text = fetch_article_html(session, url, timeout)
     content_html = extract_js_content(html_text)
     if content_html:
-        content_html_with_markers, image_urls = replace_images_with_placeholders(content_html)
-        content_md = html2text.html2text(content_html_with_markers).strip()
-        image_ocr_texts, image_llm_types = fetch_image_ocr_texts(
-            session, image_urls, timeout, sleep_seconds
-        )
-        detail["content"] = inject_ocr_text_into_markdown(
-            content_md, image_urls, image_ocr_texts, image_llm_types
-        )
-        detail["image_urls"] = image_urls
-        detail["image_ocr_texts"] = image_ocr_texts
-        detail["image_llm_types"] = image_llm_types
+        if getattr(config, "RAW_COLLECTION_MODE", False):
+            content_html = re.sub(r"<img\b[^>]*>", "", content_html, flags=re.I)
+            detail["content"] = html2text.html2text(content_html).strip()
+        else:
+            content_html_with_markers, image_urls = replace_images_with_placeholders(content_html)
+            content_md = html2text.html2text(content_html_with_markers).strip()
+            image_ocr_texts, image_llm_types = fetch_image_ocr_texts(
+                session, image_urls, timeout, sleep_seconds
+            )
+            detail["content"] = inject_ocr_text_into_markdown(
+                content_md, image_urls, image_ocr_texts, image_llm_types
+            )
+            detail["image_urls"] = image_urls
+            detail["image_ocr_texts"] = image_ocr_texts
+            detail["image_llm_types"] = image_llm_types
 
     detail["publish_time"] = extract_publish_time(html_text)
     detail["author"] = extract_author(html_text)
     return detail
 
 
+def _clone_session_with_auth(session):
+    cloned = requests.Session()
+    try:
+        cloned.headers.update(session.headers)
+    except Exception:
+        pass
+    return cloned
+
+
+def _fetch_item_detail_job(index, total, item, timeout, sleep_seconds, auth_session):
+    url = item.get("url")
+    title = (item.get("title") or "无标题")[:40]
+    account = item.get("account_keyword") or "未知公众号"
+    if not url:
+        return index, {}, f"公众号：跳过无链接推送 {index}/{total}：{account} - {title}"
+
+    try:
+        detail = fetch_article_detail(auth_session, url, timeout, sleep_seconds)
+        return index, detail, f"公众号：正文下载完成 {index}/{total}：{account} - {title}"
+    except Exception as exc:
+        return index, {"content_error": str(exc)}, f"公众号：正文下载失败 {index}/{total}：{account} - {title}，{exc}"
+
+
 def enrich_items_with_content(session, items, timeout, sleep_seconds):
-    for idx, item in enumerate(items, start=1):
-        url = item.get("url")
-        if not url:
-            continue
-        try:
-            item.update(fetch_article_detail(session, url, timeout, sleep_seconds))
-        except Exception as exc:
-            item["content_error"] = str(exc)
-        if sleep_seconds:
-            time.sleep(sleep_seconds)
+    total = len(items)
+    if total <= 0:
+        return
+
+    max_workers = max(1, int(getattr(config, "WECHAT_DOWNLOAD_MAX_WORKERS", 4) or 1))
+    if max_workers == 1 or total == 1:
+        for idx, item in enumerate(items, start=1):
+            url = item.get("url")
+            title = (item.get("title") or "无标题")[:40]
+            account = item.get("account_keyword") or "未知公众号"
+            if not url:
+                print(f"公众号：跳过无链接推送 {idx}/{total}：{account} - {title}")
+                continue
+            try:
+                print(f"公众号：正在下载正文 {idx}/{total}：{account} - {title}")
+                item.update(fetch_article_detail(session, url, timeout, sleep_seconds))
+            except Exception as exc:
+                item["content_error"] = str(exc)
+                print(f"公众号：正文下载失败 {idx}/{total}：{account} - {title}，{exc}")
+            if sleep_seconds:
+                time.sleep(sleep_seconds)
+        return
+
+    print(f"公众号：正在并行下载正文，共 {total} 条，最大并行数 {max_workers}")
+    futures = {}
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+        for idx, item in enumerate(items, start=1):
+            title = (item.get("title") or "无标题")[:40]
+            account = item.get("account_keyword") or "未知公众号"
+            print(f"公众号：已加入下载队列 {idx}/{total}：{account} - {title}")
+            worker_session = _clone_session_with_auth(session)
+            future = executor.submit(
+                _fetch_item_detail_job,
+                idx,
+                total,
+                item,
+                timeout,
+                sleep_seconds,
+                worker_session,
+            )
+            futures[future] = item
+
+        for future in concurrent.futures.as_completed(futures):
+            item = futures[future]
+            try:
+                idx, detail, message = future.result()
+                _ = idx
+            except Exception as exc:
+                detail = {"content_error": str(exc)}
+                message = f"公众号：正文下载线程异常，{exc}"
+            item.update(detail)
+            print(message)

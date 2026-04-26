@@ -7,6 +7,7 @@ from selenium.webdriver.support.ui import WebDriverWait
 
 import config
 from wanyou.decider import resolve_copy_decision
+from wanyou.filter_debug import log_filter_decision
 from wanyou.utils_html import html_to_markdown, save_content
 from wanyou.utils_issue_filter import load_previous_titles, seen_in_previous_issue
 from wanyou.utils_web import build_requests_session, make_browser
@@ -68,14 +69,23 @@ def crawl_lib(doc, base_images_dir):
             date = time_label.text
             date = f"{date[-11:-7]}-{date[-6:-4]}-{date[-3:-1]}"
             if seen_in_previous_issue(title, previous_titles):
+                log_filter_decision(section="lib_notice", title=title, status="dropped", reason="previous_issue", stage="crawler_lib_notice", date=date, url=browser.current_url)
                 browser.back(); continue
-            if all(sub not in title for sub in config.LIB_NO_CONSIDER):
-                if resolve_copy_decision("lib_notice", title, date):
-                    container = WebDriverWait(browser, config.WAIT_TIMEOUT).until(EC.presence_of_element_located((By.CLASS_NAME, "concon")))
-                    titles.append(title)
-                    full_texts.append(html_to_markdown(container, browser.current_url, session, inline_images_dir, image_counter, "lib", browser.current_url))
+            if (not getattr(config, "RAW_COLLECTION_MODE", False)) and any(sub in title for sub in config.LIB_NO_CONSIDER):
+                log_filter_decision(section="lib_notice", title=title, status="dropped", reason="site_blacklist", stage="crawler_lib_notice", date=date, url=browser.current_url)
+            elif getattr(config, "RAW_COLLECTION_MODE", False) or resolve_copy_decision("lib_notice", title, date):
+                container = WebDriverWait(browser, config.WAIT_TIMEOUT).until(EC.presence_of_element_located((By.CLASS_NAME, "concon")))
+                titles.append(title)
+                full_texts.append(html_to_markdown(container, browser.current_url, session, inline_images_dir, image_counter, "lib", browser.current_url))
+                log_filter_decision(section="lib_notice", title=title, status="kept", reason="crawler_selected", stage="crawler_lib_notice", date=date, url=browser.current_url)
+            else:
+                log_filter_decision(section="lib_notice", title=title, status="dropped", reason="copy_decision_false", stage="crawler_lib_notice", date=date, url=browser.current_url)
             browser.back()
-        except Exception:
+        except Exception as exc:
+            try:
+                log_filter_decision(section="lib_notice", title=locals().get("title", ""), status="error", reason="detail_exception", stage="crawler_lib_notice", details={"error": str(exc)[:300]})
+            except Exception:
+                pass
             continue
     browser.quit()
 
@@ -100,9 +110,14 @@ def crawl_lib(doc, base_images_dir):
         item_index += 1
         try:
             url = block.get_attribute("href")
-            if not url or url in seen_urls:
+            if not url:
+                log_filter_decision(section="lib_event", title=block.text.strip(), status="dropped", reason="missing_url", stage="crawler_lib_event")
+                continue
+            if url in seen_urls:
+                log_filter_decision(section="lib_event", title=block.text.strip(), status="dropped", reason="duplicate_url", stage="crawler_lib_event", url=url)
                 continue
             title = block.text.strip()
+            log_filter_decision(section="lib_event", title=title, status="found", reason="list_item", stage="crawler_lib_event", url=url)
             block.click()
             if "lib.tsinghua.edu.cn" not in browser.current_url:
                 browser.back(); continue
@@ -117,14 +132,22 @@ def crawl_lib(doc, base_images_dir):
                 month, day = month_day[:2]
                 date = f"{year}-{month.zfill(2)}-{day.zfill(2)}"
             if seen_in_previous_issue(title, previous_titles):
+                log_filter_decision(section="lib_event", title=title, status="dropped", reason="previous_issue", stage="crawler_lib_event", date=date, url=browser.current_url)
                 browser.back(); continue
-            if resolve_copy_decision("lib_event", title, date):
+            if getattr(config, "RAW_COLLECTION_MODE", False) or resolve_copy_decision("lib_event", title, date):
                 container = WebDriverWait(browser, config.WAIT_TIMEOUT).until(EC.presence_of_element_located((By.CSS_SELECTOR, "div.material-value.editor-width")))
                 titles.append(title)
                 markdown_text = html_to_markdown(container, browser.current_url, session, inline_images_dir, image_counter, "lib", browser.current_url)
                 full_texts.append(extract_content(markdown_text) if any(sub in title for sub in config.LIB_CONSIDER) else markdown_text)
+                log_filter_decision(section="lib_event", title=title, status="kept", reason="crawler_selected", stage="crawler_lib_event", date=date, url=browser.current_url)
+            else:
+                log_filter_decision(section="lib_event", title=title, status="dropped", reason="copy_decision_false", stage="crawler_lib_event", date=date, url=browser.current_url)
             browser.back()
-        except Exception:
+        except Exception as exc:
+            try:
+                log_filter_decision(section="lib_event", title=locals().get("title", ""), status="error", reason="detail_exception", stage="crawler_lib_event", url=locals().get("url", ""), details={"error": str(exc)[:300]})
+            except Exception:
+                pass
             continue
     browser.quit()
     doc.write("# 图书馆信息\n\n")

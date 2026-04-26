@@ -9,6 +9,7 @@ from selenium.webdriver.support.ui import WebDriverWait
 
 import config
 from wanyou.decider import resolve_copy_decision
+from wanyou.filter_debug import log_filter_decision
 from wanyou.unified_auth import authenticate_shared_browser
 from wanyou.utils_html import html_to_markdown, save_content
 from wanyou.utils_issue_filter import load_previous_titles, seen_in_previous_issue
@@ -165,20 +166,36 @@ def _collect_info_items(browser, session, base_images_dir, title_filter=None):
         try:
             link_node, url = _extract_block_link(block)
             list_title = ((link_node.text or "").strip() or (block.text or "").strip().splitlines()[0].strip())
-            if url in seen_urls or (list_title and seen_in_previous_issue(list_title, previous_titles)):
+            log_filter_decision(section="info", title=list_title, status="found", reason="list_item", stage="crawler_info", url=url)
+            if url in seen_urls:
+                log_filter_decision(section="info", title=list_title, status="dropped", reason="duplicate_url", stage="crawler_info", url=url)
+                continue
+            if list_title and seen_in_previous_issue(list_title, previous_titles):
+                log_filter_decision(section="info", title=list_title, status="dropped", reason="previous_issue", stage="crawler_info", url=url)
                 continue
             seen_urls, browser = open_in_new_tab(url, seen_urls, browser, web)
             time.sleep(2)
             date = _extract_detail_date(browser)
             title = _extract_detail_title(browser)
-            if seen_in_previous_issue(title, previous_titles) or (title_filter and not title_filter(title)):
+            if seen_in_previous_issue(title, previous_titles):
+                log_filter_decision(section="info", title=title, status="dropped", reason="previous_issue", stage="crawler_info_detail", date=date, url=browser.current_url)
                 browser.close(); browser.switch_to.window(web); continue
-            if resolve_copy_decision("info", title, date):
+            if (not getattr(config, "RAW_COLLECTION_MODE", False)) and title_filter and not title_filter(title):
+                log_filter_decision(section="info", title=title, status="dropped", reason="title_filter", stage="crawler_info_detail", date=date, url=browser.current_url)
+                browser.close(); browser.switch_to.window(web); continue
+            if getattr(config, "RAW_COLLECTION_MODE", False) or resolve_copy_decision("info", title, date):
                 container = _extract_detail_container(browser)
                 titles.append(title)
                 full_texts.append(html_to_markdown(container, browser.current_url, session, inline_images_dir, image_counter, "info", browser.current_url))
+                log_filter_decision(section="info", title=title, status="kept", reason="crawler_selected", stage="crawler_info_detail", date=date, url=browser.current_url)
+            else:
+                log_filter_decision(section="info", title=title, status="dropped", reason="copy_decision_false", stage="crawler_info_detail", date=date, url=browser.current_url)
             browser.close(); browser.switch_to.window(web)
-        except Exception:
+        except Exception as exc:
+            try:
+                log_filter_decision(section="info", title=locals().get("list_title") or locals().get("title") or "", status="error", reason="detail_exception", stage="crawler_info", url=locals().get("url") or "", details={"error": str(exc)[:300]})
+            except Exception:
+                pass
             try:
                 if len(browser.window_handles) > 1:
                     browser.close(); browser.switch_to.window(web)

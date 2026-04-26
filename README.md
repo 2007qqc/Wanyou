@@ -50,6 +50,28 @@ python skills\wanyou-full-run\scripts\run_wanyou_full_run.py --with-login
 python skills\wanyou-full-run\scripts\run_wanyou_full_run.py --with-login --skip-wechat --skip-docx
 ```
 
+生成整体 ranked raw，用于审稿和排查筛选结果：
+
+```powershell
+python skills\wanyou-full-run\scripts\run_wanyou_full_run.py --with-login --ranked-raw
+```
+
+`--ranked-raw` 会爬取各平台信息，不下载图片；只做一周内发布的硬性时效筛选和正文清洗，不做摘要压缩。随后 LLM 会按物理系本科生视角为各版块条目打重要性分数并排序，输出 `*_ranked_raw.md`。
+
+如果希望连 LLM 正文清洗也跳过，只保留基础格式整理和 LLM 打分排序：
+
+```powershell
+python skills\wanyou-full-run\scripts\run_wanyou_full_run.py --with-login --ranked-raw-no-clean
+```
+
+该模式输出 `*_ranked_raw_no_clean.md`，适合快速审稿或排查爬虫原始正文。
+
+按 TODO 标准直接生成完整富文本：先生成 ranked raw，再按每类最高分条目挑选 3-5 条，最后输出主题化 Markdown 和 HTML：
+
+```powershell
+python skills\wanyou-full-run\scripts\run_wanyou_full_run.py --with-login --todo-richtext
+```
+
 ## 单模块测试命令
 
 下面这些命令主要作为测试和排障使用。每次运行会在 `output/module_<modules>_<timestamp>/` 下生成对应产物。
@@ -156,7 +178,7 @@ python scripts\publish_wechat_draft.py output\xxx\wanyou_xxx.html --cover output
 python scripts\publish_wechat_draft.py output\xxx\wanyou_xxx.html --dry-run
 ```
 
-???????????
+如果要强制指定封面图：
 
 ```powershell
 python scripts\publish_wechat_draft.py output\xxx\wanyou_xxx.html --cover output\xxx\_theme\badge.png --dry-run
@@ -189,6 +211,46 @@ $env:WECHAT_MP_APPSECRET = "your-appsecret"
 写入后请重新打开 PowerShell 或 IDE 终端，再运行草稿脚本。公众号后台还需要把当前机器出口 IP 加入 IP 白名单，否则获取 `access_token` 可能失败。
 
 安全建议：先保存到草稿箱，在公众号后台人工预览确认后再发布，不建议一开始直接自动发布。
+
+## 保存到秀米草稿
+
+项目现在提供“直接打开秀米图文编辑器、自动填充内容并点击保存”的脚本。
+这是浏览器自动化方案：如果你尚未登录秀米，脚本会打开 Edge 并等待你手动登录；登录完成后回到终端按回车，脚本会继续填充正文并保存草稿。
+
+已有 `.html + .md` 输出时，直接推送到秀米：
+
+```powershell
+python scripts\publish_xiumi_draft.py output\xxx\wanyou_xxx.html --markdown output\xxx\wanyou_xxx.md --title "万有预报"
+```
+
+如果只想检查自动填充效果，不点击保存：
+
+```powershell
+python scripts\publish_xiumi_draft.py output\xxx\wanyou_xxx.html --markdown output\xxx\wanyou_xxx.md --dry-run
+```
+
+从零开始跑完整万有预报并直接送到秀米：
+
+```powershell
+python scripts\run_wanyou_to_xiumi_draft.py
+```
+
+如需同时抓取统一认证站点：
+
+```powershell
+python scripts\run_wanyou_to_xiumi_draft.py --with-login
+```
+
+默认行为：
+- 直接打开秀米图文编辑器 `paper/for/new`
+- 优先读取同名 Markdown，将其转换为内联富文本后写入秀米正文
+- 若正文中仍引用本地图片，会自动转成 data URL 内嵌，减少秀米端丢图概率
+- 点击保存后，若当前地址从 `for/new` 变为正式草稿地址，会在终端输出 `xiumi_draft_url`
+
+当前限制：
+- 秀米登录仍需人工完成
+- 若秀米改版导致按钮或输入框选择器变化，脚本可能需要重新适配
+- 当前实现是“浏览器自动保存草稿”，不是秀米开放 API 对接
 
 ## 公众号 API 环境变量
 公众号抓取使用 `down.mptext.top` API，不直接登录微信。程序读取环境变量：
@@ -274,17 +336,62 @@ python scripts\run_wanyou_module.py wechat --md-only
 python scripts\run_wanyou_module.py login --raw-only --md-only
 ```
 
+
 ## 筛选策略
+
+万有预报的筛选分为三层：硬性时效判断、面向物理系本科生的相关性判断、版块容量控制。
+
+### 稳定运行日期
+
+默认情况下，程序把本次运行所在日期的 `00:00` 作为统一时效基准，而不使用运行那一刻的小时和分钟。因此同一天内多次生成，内容不会因上午、下午或晚上运行而变化；只会因网站消息本身变化而变化。
+
+如果需要复现某一天的筛选结果，可以临时指定运行日期：
+
+```powershell
+$env:WANYOU_RUN_DATE = "2026-04-20"
+python skills\wanyou-full-run\scripts\run_wanyou_full_run.py --skip-docx
+```
+
+程序仍会使用真实抓取时间命名输出目录；`WANYOU_RUN_DATE` 只影响日期解析和时效筛选。
+
+### 日期与时效判断
+
+程序会尽量提取标题、摘要、正文、OCR 图片文字中的所有显式日期，并按上下文分类：
+
+- `deadline`：截止、报名截止、申请截止、提交截止、截至、报名时间、申请时间等。
+- `event`：活动时间、报告时间、讲座时间、举办时间、开始时间、比赛时间等。
+- `publish`：发布时间、发布日期、发布等。
+- `mentioned`：能识别出日期，但上下文不足以判断用途。
+
+判断优先级如下：
+
+- 如果识别到截止时间，首要看截止时间；截止未过就保留，截止已过就丢弃。
+- 如果没有截止时间，但识别到活动、讲座、报告等时间，则看活动是否尚未发生；刚结束 12 小时内也允许保留。
+- 如果只识别到发布时间，才用“运行日期前 7 天”作为兜底阈值。
+- 如果完全没有可解析日期，程序不会仅因日期缺失丢弃，会交给后续相关性判断。
+
+这意味着“发布时间较早但报名尚未截止”的信息可以保留，而“今天发布但截止时间已过”的信息会被丢弃。
+
+### 相关性与容量控制
 
 当前 LLM 筛选重点：
 
-- 只接受生成万有预报前一周内发布的信息。
 - 只接受和清华大学物理系本科生直接相关的信息。
-- 重点核对时间戳、发布者、面向群体，再结合正文内容判断。
-- 研究生会、研究生招生、教师招聘等与物理系本科生关系弱的信息会被排除。
-- 公众号按文章发布日期取最新 5 条以内。
+- 优先保留课业相关信息，例如选课、排课、调课、调休、考试、培养方案、学籍和教务安排。
+- 优先保留学术与培养相关信息，例如校内培养计划、星火计划、SRT、科研训练、讲座、报告和奖助机会。
+- 研究生会、研究生招生、教师招聘、研究生或博士生住宿抽签等与物理系本科生关系弱的信息会被排除。
 - 其他小版块信息过多时，每个版块最多保留 4 条。
-- 单条信息会通过 LLM 压缩，控制摘要和正文总篇幅。
+- 公众号经过时效筛选后，最多保留 5 条，并按学生会、青年科协、学生社团、学生公益、其他公众号信息分版块输出。
+
+### Debug 中的日期筛选记录
+
+每次运行会在 `debug/filter_decisions.jsonl` 和 `debug/filter_decisions_summary.json` 记录筛选过程。日期筛选对应的阶段通常是：
+
+- `temporal_filter`：Markdown 合成阶段的统一日期筛选。
+- `wechat_temporal_filter`：公众号正文抓取后的日期筛选。
+
+每条记录的 `details.signals` 会展示程序识别到的日期，包括 `kind`、`raw`、`parsed` 和 `context`；`details.basis` 是实际用于判断的日期；`reason` 会显示 `deadline_active`、`deadline_expired`、`event_active`、`event_expired`、`publish_recent` 或 `publish_older_than_cutoff`。
+
 
 ## 当前栏目行为
 
@@ -334,3 +441,59 @@ LLM_MODEL = "deepseek-chat"
 3. 公众号失败时，优先检查 `WECHAT_PUBLIC_API_KEY` 和 session 有效性。
 4. 教务或家园网失败时，优先看 `debug/` 下的登录与页面快照。
 5. DOCX 导出失败时，先检查本机是否安装 `pandoc`，不要优先改爬虫或 Markdown。
+
+# TODO
+## 打分raw
+
+现在程序添加了爬取所有未过时、仅经过清洗的raw信息并让LLM打分的功能模块，
+目标是向万有预报制作者提供无遗漏、有权重的参考。但是现在LLM分配的打分
+尚不符合物理系同学的信息获取偏好。计划让Codex根据下面的“物理系本科生阅读偏好”
+信息来修改prompt，每次修改后运行一遍打分raw，检验LLM评分是否符合物理系本科生偏好
+并再修改prompt，形成训练循环，直到评分和偏好符合，进入万有预报生成环节。
+
+当前对应指令：
+
+```powershell
+python skills\wanyou-full-run\scripts\run_wanyou_full_run.py --with-login --ranked-raw
+```
+
+如果只想看原始正文和排序，不走 LLM 正文清洗：
+
+```powershell
+python skills\wanyou-full-run\scripts\run_wanyou_full_run.py --with-login --ranked-raw-no-clean
+```
+
+## 新的万有预报生成逻辑
+
+按上一步训练好LLM、生成正确的打分raw后，按先前的信息类型分类，每个类别取3-5个最高分信息作为
+万有预报内容，生成富文本。
+
+当前已实现的对应指令：
+
+```powershell
+python skills\wanyou-full-run\scripts\run_wanyou_full_run.py --with-login --todo-richtext
+```
+
+该指令会：
+1. 先生成 ranked raw；
+2. 再按类别选出高分条目；
+3. 生成最终主题化 Markdown；
+4. 导出 HTML 富文本。
+
+尚未实现的部分：
+- 将“打分 raw + 富文本 + 秀米草稿”完全压成单条 Python 指令；
+- 将秀米草稿保存做成无需人工登录的正式接口方案。
+
+按这个workflow生成一系列新的万有预报快捷指令：
+
+当前已由下面这条指令等价覆盖：
+
+```powershell
+python skills\wanyou-full-run\scripts\run_wanyou_full_run.py --with-login --todo-richtext
+```
+
+## 物理系本科生偏好
+在`tendency.md`中给出了一个模板。
+
+## 已知问题
+LLM清洗有重复、过度问题，需要减少重复清洗层数，最好全程仅一次清洗，达到信息无损且无乱码效果。

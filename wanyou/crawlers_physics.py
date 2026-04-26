@@ -7,6 +7,7 @@ from selenium.webdriver.common.by import By
 
 import config
 from wanyou.decider import resolve_copy_decision
+from wanyou.filter_debug import log_filter_decision
 from wanyou.utils_issue_filter import current_issue_cutoff, load_previous_titles, seen_in_previous_issue, should_skip_by_time
 from wanyou.utils_html import save_content
 from wanyou.utils_llm import chat_complete
@@ -23,6 +24,15 @@ DEFAULT_REPORT_KEYWORDS = [
     "lecture",
 ]
 DEFAULT_LOCATION_KEYWORDS = ["W101", "W105", "物理楼", "理科楼"]
+DEFAULT_REPORT_EXCLUDE_KEYWORDS = [
+    "学位授权点建设报告",
+    "招聘信息",
+    "导师及研究方向",
+    "本科生工作组",
+    "研究生工作组",
+    "新闻动态",
+    "公告",
+]
 
 
 def _config_keywords(name: str, fallback: list[str]) -> list[str]:
@@ -39,8 +49,21 @@ def _looks_like_report(title: str) -> bool:
     text = (title or "").strip()
     if not text:
         return False
+    lowered = text.lower()
+    if any(keyword.lower() in lowered for keyword in DEFAULT_REPORT_EXCLUDE_KEYWORDS):
+        return False
     keywords = _config_keywords("PHYSICS_REPORT_FORCE_KEYWORDS", DEFAULT_REPORT_KEYWORDS)
-    return any(keyword.lower() in text.lower() for keyword in keywords)
+    return any(keyword.lower() in lowered for keyword in keywords)
+
+
+def _looks_like_non_report_page(title: str, content_text: str = "") -> bool:
+    text = "\n".join(part for part in [title or "", content_text or ""] if part).lower()
+    if any(keyword.lower() in text for keyword in DEFAULT_REPORT_EXCLUDE_KEYWORDS):
+        return True
+    # These pages are usually navigation/administrative pages rather than actual reports.
+    if "学位授权点建设" in text or "研究生工作组" in text:
+        return True
+    return False
 
 
 def _normalize_text(html_text: str) -> str:
@@ -275,44 +298,60 @@ def crawl_physics(doc, _base_images_dir):
                 title = ((link.text or "").strip() or (link.get_attribute("title") or "").strip())
                 href = (link.get_attribute("href") or "").strip()
                 list_date = _extract_list_date_from_link(link)
-                if not href or href in seen_urls or not _looks_like_report(title):
+                if not href:
                     continue
+                if href in seen_urls:
+                    log_filter_decision(section="physics", title=title, status="dropped", reason="duplicate_url", stage="crawler_physics", date=list_date, url=href)
+                    continue
+                if not _looks_like_report(title):
+                    log_filter_decision(section="physics", title=title, status="dropped", reason="not_report_like", stage="crawler_physics", date=list_date, url=href)
+                    continue
+                log_filter_decision(section="physics", title=title, status="found", reason="list_item", stage="crawler_physics", date=list_date, url=href)
                 if seen_in_previous_issue(title, previous_titles):
+                    log_filter_decision(section="physics", title=title, status="dropped", reason="previous_issue", stage="crawler_physics", date=list_date, url=href)
                     continue
                 if list_date and should_skip_by_time(list_date, cutoff):
-                    continue
+                    log_filter_decision(section="physics", title=title, status="found", reason="list_date_older_than_cutoff_but_detail_checked", stage="crawler_physics", date=list_date, url=href)
 
                 seen_urls.add(href)
                 detail_url = urljoin(page_url, href)
                 try:
                     resp = session.get(detail_url, timeout=15)
                     resp.raise_for_status()
-                except Exception:
+                except Exception as exc:
+                    log_filter_decision(section="physics", title=title, status="error", reason="request_failed", stage="crawler_physics_detail", date=list_date, url=detail_url, details={"error": str(exc)[:300]})
                     continue
 
                 detail_html = _decode_response_text(resp)
                 content_text = _normalize_text(_extract_main_html(detail_html))
                 if not content_text:
+                    log_filter_decision(section="physics", title=title, status="dropped", reason="empty_detail_content", stage="crawler_physics_detail", date=list_date, url=detail_url)
                     continue
 
                 cleaned_text = _clean_physics_text(content_text, title)
+                if _looks_like_non_report_page(title, cleaned_text[:600]):
+                    log_filter_decision(section="physics", title=title, status="dropped", reason="non_report_page", stage="crawler_physics_detail", date=list_date, url=detail_url)
+                    continue
                 publish_date = _extract_publish_date(title, cleaned_text or content_text)
                 if publish_date and should_skip_by_time(publish_date, cutoff):
-                    continue
+                    log_filter_decision(section="physics", title=title, status="found", reason="publish_date_older_than_cutoff_but_report_time_checked", stage="crawler_physics_detail", date=publish_date, url=detail_url)
                 if seen_in_previous_issue(title, previous_titles):
+                    log_filter_decision(section="physics", title=title, status="dropped", reason="previous_issue", stage="crawler_physics_detail", date=publish_date, url=detail_url)
                     continue
 
                 location_hit = any(
                     keyword.lower() in (content_text or "").lower()
                     for keyword in _config_keywords("PHYSICS_REPORT_LOCATION_KEYWORDS", DEFAULT_LOCATION_KEYWORDS)
                 )
-                decision = resolve_copy_decision("physics", title, publish_date, (content_text or "")[:500])
+                decision = True if getattr(config, "RAW_COLLECTION_MODE", False) else resolve_copy_decision("physics", title, publish_date, (content_text or "")[:500])
                 if not decision and not location_hit and not _looks_like_report((cleaned_text or content_text)[:200]):
+                    log_filter_decision(section="physics", title=title, status="dropped", reason="copy_decision_false", stage="crawler_physics_detail", date=publish_date, url=detail_url)
                     continue
 
                 final_title, body_text = _build_report_body(title, publish_date, detail_url, cleaned_text or content_text)
                 titles.append(final_title)
                 full_texts.append(body_text)
+                log_filter_decision(section="physics", title=title, status="kept", reason="crawler_selected", stage="crawler_physics_detail", date=publish_date, url=detail_url)
     finally:
         browser.quit()
 

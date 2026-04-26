@@ -9,6 +9,7 @@ from selenium.webdriver.support.ui import WebDriverWait
 
 import config
 from wanyou.decider import resolve_copy_decision
+from wanyou.filter_debug import log_filter_decision
 from wanyou.unified_auth import authenticate_shared_browser
 from wanyou.utils_html import html_to_markdown, save_content
 from wanyou.utils_issue_filter import load_previous_titles, seen_in_previous_issue
@@ -125,23 +126,38 @@ def crawl_myhome(doc, base_images_dir, username="", password="", browser=None):
         for link in notice_links:
             try:
                 url = (link.get_attribute("href") or "").strip()
-                if not url or url in seen_urls:
+                list_title = (link.text or "").strip()
+                if not url:
+                    log_filter_decision(section="myhome", title=list_title, status="dropped", reason="missing_url", stage="crawler_myhome")
                     continue
+                if url in seen_urls:
+                    log_filter_decision(section="myhome", title=list_title, status="dropped", reason="duplicate_url", stage="crawler_myhome", url=url)
+                    continue
+                log_filter_decision(section="myhome", title=list_title, status="found", reason="list_item", stage="crawler_myhome", url=url)
                 seen_urls, browser = open_in_new_tab(url, seen_urls, browser, web)
                 date = _extract_detail_date(browser)
                 title = _extract_detail_title(browser)
                 if seen_in_previous_issue(title, previous_titles):
+                    log_filter_decision(section="myhome", title=title, status="dropped", reason="previous_issue", stage="crawler_myhome_detail", date=date, url=browser.current_url)
                     browser.close(); browser.switch_to.window(web); continue
-                if any(sub in title for sub in config.MYHOME_NO_CONSIDER):
+                if (not getattr(config, "RAW_COLLECTION_MODE", False)) and any(sub in title for sub in config.MYHOME_NO_CONSIDER):
+                    log_filter_decision(section="myhome", title=title, status="dropped", reason="site_blacklist", stage="crawler_myhome_detail", date=date, url=browser.current_url)
                     browser.close(); browser.switch_to.window(web); continue
-                if resolve_copy_decision("myhome", title, date):
+                if getattr(config, "RAW_COLLECTION_MODE", False) or resolve_copy_decision("myhome", title, date):
                     container = _extract_detail_container(browser)
                     content_md = html_to_markdown(container, browser.current_url, session, inline_images_dir, image_counter, "myhome", browser.current_url)
                     content_md = convert_markdown_images_to_text(content_md)
                     titles.append(title)
                     full_texts.append(content_md)
+                    log_filter_decision(section="myhome", title=title, status="kept", reason="crawler_selected", stage="crawler_myhome_detail", date=date, url=browser.current_url)
+                else:
+                    log_filter_decision(section="myhome", title=title, status="dropped", reason="copy_decision_false", stage="crawler_myhome_detail", date=date, url=browser.current_url)
                 browser.close(); browser.switch_to.window(web)
-            except Exception:
+            except Exception as exc:
+                try:
+                    log_filter_decision(section="myhome", title=locals().get("list_title") or locals().get("title") or "", status="error", reason="detail_exception", stage="crawler_myhome", url=locals().get("url") or "", details={"error": str(exc)[:300]})
+                except Exception:
+                    pass
                 try:
                     if len(browser.window_handles) > 1:
                         browser.close(); browser.switch_to.window(web)

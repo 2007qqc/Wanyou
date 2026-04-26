@@ -6,6 +6,12 @@ import os
 import pathlib
 import re
 import sys
+
+try:
+    import winreg
+except Exception:
+    winreg = None
+
 from html.parser import HTMLParser
 from urllib.parse import urlparse
 
@@ -83,7 +89,30 @@ def _configure_console():
 
 
 def _env(name: str) -> str:
-    return os.getenv(name, "").strip()
+    value = os.getenv(name, "").strip()
+    if value:
+        return value
+    if winreg is None:
+        return ""
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, "Environment") as key:
+            value, _value_type = winreg.QueryValueEx(key, name)
+    except Exception:
+        return ""
+    return str(value or "").strip()
+
+
+def _env_diagnostic(name: str) -> str:
+    process_has = bool(os.getenv(name, "").strip())
+    user_has = False
+    if winreg is not None:
+        try:
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, "Environment") as key:
+                value, _value_type = winreg.QueryValueEx(key, name)
+                user_has = bool(str(value or "").strip())
+        except Exception:
+            user_has = False
+    return f"{name}: process={'yes' if process_has else 'no'}, user={'yes' if user_has else 'no'}"
 
 
 def get_access_token(appid: str, appsecret: str, timeout: int) -> str:
@@ -384,8 +413,11 @@ def main():
         appid = _env(args.appid_env)
         appsecret = _env(args.secret_env)
         if not appid or not appsecret:
+            diagnostics = "; ".join([_env_diagnostic(args.appid_env), _env_diagnostic(args.secret_env)])
             raise SystemExit(
-                f"请先设置公众号环境变量 {args.appid_env} 和 {args.secret_env}。"
+                f"\u8bf7\u5148\u8bbe\u7f6e\u516c\u4f17\u53f7\u73af\u5883\u53d8\u91cf {args.appid_env} \u548c {args.secret_env}\u3002"
+                f" \u5f53\u524d\u68c0\u6d4b\u7ed3\u679c\uff1a{diagnostics}\u3002"
+                "\u6ce8\u610f\uff1a\u4fdd\u5b58\u516c\u4f17\u53f7\u8349\u7a3f\u9700\u8981\u516c\u4f17\u53f7\u5b98\u65b9 AppID/AppSecret\uff0c\u4e0d\u662f WECHAT_PUBLIC_API_KEY\u3002"
             )
         access_token = get_access_token(appid, appsecret, args.timeout)
         print("已获取公众号 access_token")
@@ -400,14 +432,14 @@ def main():
     if args.dry_run:
         thumb_media_id = "DRY_RUN_THUMB_MEDIA_ID"
         if cover_path:
-            print(f"dry-run: ?????? {cover_path}")
+            print(f"dry-run: \u5c06\u4e0a\u4f20\u5c01\u9762\u56fe {cover_path}")
         else:
-            print("dry-run: ???????????????????????????????")
+            print("dry-run: \u672a\u6307\u5b9a\u5c01\u9762\uff0c\u4e5f\u672a\u627e\u5230\u53ef\u7528\u6b63\u6587\u56fe\u7247\uff1b\u6b63\u5f0f\u4fdd\u5b58\u65f6\u5fae\u4fe1\u53ef\u80fd\u8981\u6c42\u5c01\u9762\u56fe")
     else:
         if cover_path is None:
-            raise SystemExit("?????????????????????????????? thumb_media_id??? --cover ??????")
+            raise SystemExit("\u672a\u6307\u5b9a\u5c01\u9762\uff0c\u4e5f\u672a\u627e\u5230\u53ef\u7528\u6b63\u6587\u56fe\u7247\u3002\u5fae\u4fe1\u516c\u4f17\u53f7\u8349\u7a3f\u63a5\u53e3\u901a\u5e38\u8981\u6c42 thumb_media_id\uff0c\u8bf7\u7528 --cover \u6307\u5b9a\u5c01\u9762\u56fe\u3002")
         thumb_media_id = upload_cover(access_token, cover_path, args.timeout)
-        print("??????")
+        print("\u5df2\u4e0a\u4f20\u5c01\u9762\u56fe")
         print("已上传封面图")
 
     digest = infer_digest(content, args.digest)

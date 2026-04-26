@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Optional, Set
 
 import config
+from wanyou.run_clock import effective_run_date, effective_run_datetime
 
 
 def current_issue_cutoff(now: Optional[dt.datetime] = None) -> dt.datetime:
@@ -13,7 +14,7 @@ def current_issue_cutoff(now: Optional[dt.datetime] = None) -> dt.datetime:
         parsed = parse_datetime_text(override)
         if parsed is not None:
             return parsed
-    current = now or dt.datetime.now()
+    current = effective_run_datetime(now)
     cutoff = current - dt.timedelta(days=7)
     return cutoff.replace(second=0, microsecond=0)
 
@@ -25,7 +26,7 @@ def parse_datetime_text(text: str) -> Optional[dt.datetime]:
         return None
 
     year_first = re.search(
-        r"(20\d{2})[\u5e74\-/.](\d{1,2})[\u6708\-/.](\d{1,2})(?:\u65e5)?(?:\s+(\d{1,2})[:\uff1a](\d{2}))?",
+        r"(20\d{2})[年\-/.](\d{1,2})[月\-/.](\d{1,2})(?:日)?(?:\s+(\d{1,2})[:：](\d{2}))?",
         raw,
     )
     if year_first:
@@ -38,11 +39,11 @@ def parse_datetime_text(text: str) -> Optional[dt.datetime]:
         )
 
     month_day = re.search(
-        r"(\d{1,2})\u6708(\d{1,2})\u65e5(?:\s*(\d{1,2})[:\uff1a](\d{2}))?",
+        r"(\d{1,2})月(\d{1,2})日(?:\s*(\d{1,2})[:：](\d{2}))?",
         raw,
     )
     if month_day:
-        current_year = dt.datetime.now().year
+        current_year = effective_run_date().year
         return _safe_datetime(
             current_year,
             int(month_day.group(1)),
@@ -63,63 +64,18 @@ def should_skip_by_time(date_text: str, cutoff: Optional[dt.datetime] = None) ->
 
 
 def load_previous_titles(current_markdown_path: str = "") -> Set[str]:
-    output_dir = os.path.abspath(getattr(config, "OUTPUT_DIR", "./output"))
-    if not os.path.isdir(output_dir):
-        return set()
-
-    prefix = f"{getattr(config, 'OUTPUT_NAME_PREFIX', 'wanyou')}_"
-    current_abs = os.path.abspath(current_markdown_path) if current_markdown_path else ""
-    current_ts = _extract_report_timestamp(current_abs)
-    candidates = []
-    for root, _, files in os.walk(output_dir):
-        for name in files:
-            if not name.startswith(prefix):
-                continue
-            if not name.endswith('.md') or name.endswith('_raw.md'):
-                continue
-            full_path = os.path.abspath(os.path.join(root, name))
-            if current_abs and full_path == current_abs:
-                continue
-            report_ts = _extract_report_timestamp(full_path)
-            if report_ts is None:
-                continue
-            candidates.append((report_ts, full_path))
-
-    if not candidates:
-        return set()
-
-    candidates.sort(key=lambda pair: (pair[0], pair[1]), reverse=True)
-    chosen_path = ""
-    if current_ts is not None:
-        for report_ts, candidate_path in candidates:
-            if report_ts < current_ts:
-                chosen_path = candidate_path
-                break
-    if not chosen_path:
-        chosen_path = candidates[0][1]
-
-    try:
-        text = Path(chosen_path).read_text(encoding="utf-8")
-    except Exception:
-        return set()
-
-    return {
-        normalize_title_key(match.group(1))
-        for match in re.finditer(r"^##\s+(.+?)\s*$", text, flags=re.M)
-        if normalize_title_key(match.group(1))
-    }
-
+    _ = current_markdown_path
+    return set()
 
 
 def seen_in_previous_issue(title: str, previous_titles: Set[str]) -> bool:
-    normalized = normalize_title_key(title)
-    return bool(normalized and normalized in previous_titles)
-
+    _ = title, previous_titles
+    return False
 
 
 def normalize_title_key(title: str) -> str:
     cleaned = re.sub(r"\s+", "", title or "")
-    cleaned = re.sub(r"[??\[\]()??,??:??|?/\\-]", "", cleaned)
+    cleaned = re.sub(r"[\[\](){}、，,：:\|?/\\\-]", "", cleaned)
     return cleaned.lower().strip()
 
 

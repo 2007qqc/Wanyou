@@ -35,6 +35,12 @@ Only export browser-agent payload:
 python skills/wanyou-richtext-export/scripts/run_wanyou_richtext_export.py output/final.md --skip-html
 ```
 
+Send an existing final HTML/Markdown pair to a Xiumi draft:
+
+```powershell
+python scripts/publish_xiumi_draft.py output/final.html --markdown output/final.md --title "万有预报"
+```
+
 ## Debug Rules
 
 - Treat HTML as the primary richtext verification target.
