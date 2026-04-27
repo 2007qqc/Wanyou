@@ -305,10 +305,11 @@ def clean_markdown_document_with_llm(markdown_text, source_prefix="final"):
             body = "\n".join(item.get("body_lines", [])).strip()
             if not body:
                 continue
+            preserve_original_summary = section.get("title") == "物理系学术报告"
             cleaned = clean_crawled_markdown(
                 body,
                 source=f"{source_prefix}:{title}",
-                use_llm=True,
+                use_llm=not preserve_original_summary,
             )
             cleaned = _normalize_body_headings(cleaned, title=title)
             cleaned = _rule_clean_markdown(cleaned)

@@ -1,5 +1,6 @@
 ﻿import json
 import re
+from html.parser import HTMLParser
 from urllib.parse import urljoin
 
 import html2text
@@ -192,10 +193,11 @@ def _build_report_body(title: str, publish_date: str, detail_url: str, cleaned_t
 
     extracted_title = str(extracted.get("title") or "").strip()
     final_title = extracted_title or title
-    speaker = str(extracted.get("speaker") or "").strip()
-    event_time = str(extracted.get("time") or "").strip()
-    location = str(extracted.get("location") or "").strip()
+    speaker = str(extracted.get("speaker") or "").strip() or _extract_original_field(cleaned_text, ["报 告 人", "报告人"])
+    event_time = str(extracted.get("time") or "").strip() or _extract_original_field(cleaned_text, ["报告时间", "时间"])
+    location = str(extracted.get("location") or "").strip() or _extract_original_field(cleaned_text, ["报告地点", "地点"])
     summary = str(extracted.get("summary") or "").strip()
+    original_summary = _extract_original_report_summary(cleaned_text)
 
     body = []
     if publish_date:
@@ -208,12 +210,46 @@ def _build_report_body(title: str, publish_date: str, detail_url: str, cleaned_t
         body.append(f"报告人: {speaker}")
     body.append(f"链接: {detail_url}")
     body.append("")
-    if summary:
+    if original_summary:
+        body.append(f"内容摘要：{original_summary}")
+    elif summary:
         body.append(f"报告摘要：{summary}")
     else:
         body.append(cleaned_text[:1800])
 
     return final_title, "\n\n".join(body).strip()
+
+
+def _extract_original_report_summary(text: str) -> str:
+    if not text:
+        return ""
+    match = re.search(
+        r"(?:\*\*)?(?:内容摘要|报告摘要|摘要|Abstract)\s*[：:]?(?:\*\*)?\s*([\s\S]+)$",
+        text,
+        flags=re.I,
+    )
+    if not match:
+        return ""
+    summary = match.group(1).strip()
+    summary = re.split(
+        r"\n\s*(?:\*\*)?(?:报告题目|报告人简介|报告人|报\s*告\s*人|报告时间|报告地点|上一篇|下一篇|上一条|下一条|关闭窗口|分享到|版权所有)(?:\s*[：:].*)?$",
+        summary,
+        maxsplit=1,
+        flags=re.M,
+    )[0].strip()
+    summary = re.sub(r"\n{3,}", "\n\n", summary)
+    return summary[:1800].strip()
+
+
+def _extract_original_field(text: str, labels: list[str]) -> str:
+    for label in labels:
+        pattern = rf"(?:\*\*)?{re.escape(label)}\s*[：:]\s*(?:\*\*)?\s*([^\n]+)"
+        match = re.search(pattern, text or "")
+        if match:
+            value = re.sub(r"\*\*", "", match.group(1)).strip()
+            if value:
+                return value
+    return ""
 
 
 def _decode_response_text(resp) -> str:
@@ -241,7 +277,84 @@ def _decode_response_text(resp) -> str:
     return content.decode("utf-8", errors="replace")
 
 
+class _PhysicsContentParser(HTMLParser):
+    TARGET_CLASS_NAMES = ("v_news_content", "wp_articlecontent", "articlecontent")
+    TARGET_IDS = ("vsb_content",)
+
+    def __init__(self):
+        super().__init__(convert_charrefs=False)
+        self.candidates = []
+        self._capturing = False
+        self._depth = 0
+        self._buffer = []
+
+    def _is_target(self, attrs) -> bool:
+        attr_map = {name.lower(): (value or "") for name, value in attrs}
+        element_id = attr_map.get("id", "")
+        class_value = attr_map.get("class", "")
+        if element_id in self.TARGET_IDS:
+            return True
+        return any(name in class_value for name in self.TARGET_CLASS_NAMES)
+
+    def _format_start_tag(self, tag, attrs) -> str:
+        rendered_attrs = []
+        for name, value in attrs:
+            if value is None:
+                rendered_attrs.append(name)
+            else:
+                escaped = str(value).replace("&", "&amp;").replace('"', "&quot;")
+                rendered_attrs.append(f'{name}="{escaped}"')
+        suffix = (" " + " ".join(rendered_attrs)) if rendered_attrs else ""
+        return f"<{tag}{suffix}>"
+
+    def handle_starttag(self, tag, attrs):
+        if not self._capturing and self._is_target(attrs):
+            self._capturing = True
+            self._depth = 1
+            self._buffer = []
+            return
+        if self._capturing:
+            self._buffer.append(self._format_start_tag(tag, attrs))
+            self._depth += 1
+
+    def handle_startendtag(self, tag, attrs):
+        if self._capturing:
+            start = self._format_start_tag(tag, attrs)
+            self._buffer.append(start[:-1] + " />")
+
+    def handle_endtag(self, tag):
+        if not self._capturing:
+            return
+        self._depth -= 1
+        if self._depth <= 0:
+            self.candidates.append("".join(self._buffer))
+            self._capturing = False
+            self._buffer = []
+            return
+        self._buffer.append(f"</{tag}>")
+
+    def handle_data(self, data):
+        if self._capturing:
+            self._buffer.append(data)
+
+    def handle_entityref(self, name):
+        if self._capturing:
+            self._buffer.append(f"&{name};")
+
+    def handle_charref(self, name):
+        if self._capturing:
+            self._buffer.append(f"&#{name};")
+
+
 def _extract_main_html(html_text: str) -> str:
+    parser = _PhysicsContentParser()
+    try:
+        parser.feed(html_text or "")
+    except Exception:
+        pass
+    if parser.candidates:
+        return max(parser.candidates, key=len)
+
     candidates = []
     patterns = [
         r"<div[^>]+id=[\"']vsb_content[\"'][^>]*>([\s\S]*?)</div>",

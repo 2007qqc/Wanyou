@@ -98,18 +98,36 @@ def _first_summary_line(markdown_text: str) -> str:
     return ""
 
 
-def _make_xiumi_browser(profile_dir: pathlib.Path):
+def _make_xiumi_browser(profile_dir: pathlib.Path, *, detach: bool = False):
     profile_dir.mkdir(parents=True, exist_ok=True)
     os.makedirs(config.SELENIUM_CACHE_DIR, exist_ok=True)
     os.environ.setdefault("SE_CACHE_PATH", os.path.abspath(config.SELENIUM_CACHE_DIR))
 
     browser_name = get_selenium_browser_name()
-    options = make_browser_options(browser_name, str(profile_dir), headless=False)
+    options = make_browser_options(browser_name, str(profile_dir), headless=False, detach=detach)
     browser = make_webdriver(browser_name, options)
     browser._wanyou_browser_name = browser_name
     if getattr(config, "PAGE_LOAD_TIMEOUT", 0):
         browser.set_page_load_timeout(config.PAGE_LOAD_TIMEOUT)
     return browser
+
+
+def _default_xiumi_profile_dir() -> pathlib.Path:
+    return pathlib.Path(getattr(config, "XIUMI_PROFILE_DIR", "./output/selenium_cache/xiumi-profile"))
+
+
+def _unique_xiumi_profile_dir() -> pathlib.Path:
+    cache_dir = pathlib.Path(getattr(config, "SELENIUM_CACHE_DIR", "./output/selenium_cache"))
+    stamp = time.strftime("%Y%m%d_%H%M%S")
+    return cache_dir / f"xiumi-profile-{stamp}-{os.getpid()}"
+
+
+def _resolve_xiumi_profile_dir(profile_dir: str = "", *, leave_open: bool = False) -> pathlib.Path:
+    if (profile_dir or "").strip():
+        return pathlib.Path(profile_dir).expanduser().resolve()
+    if leave_open:
+        return _unique_xiumi_profile_dir().resolve()
+    return _default_xiumi_profile_dir().expanduser().resolve()
 
 
 def _wait_editor_ready(browser, timeout: int):
@@ -120,12 +138,17 @@ def _wait_editor_ready(browser, timeout: int):
 
 def _visible_login_links(browser):
     links = []
-    for el in browser.find_elements(By.CSS_SELECTOR, "a.usr-sign-in"):
-        try:
-            if el.is_displayed():
-                links.append(el)
-        except Exception:
-            continue
+    selectors = [
+        (By.CSS_SELECTOR, "a.usr-sign-in"),
+        (By.XPATH, "//*[self::a or self::button][contains(normalize-space(.), '登录') or contains(normalize-space(.), '登陆')]"),
+    ]
+    for by, value in selectors:
+        for el in browser.find_elements(by, value):
+            try:
+                if el.is_displayed() and el not in links:
+                    links.append(el)
+            except Exception:
+                continue
     return links
 
 
@@ -136,14 +159,26 @@ def _wait_for_manual_login(browser, timeout: int):
             links[0].click()
         except Exception:
             pass
-        print("秀米：请在打开的浏览器中完成登录。登录完成后回到终端按回车继续。")
-        input()
+        print("秀米：请在打开的浏览器中完成登录。程序会自动检测登录状态并继续，无需回终端按回车。")
         deadline = time.time() + timeout
         while time.time() < deadline:
             if not _visible_login_links(browser):
                 return True
             time.sleep(1)
     return not _visible_login_links(browser)
+
+
+def _open_xiumi_editor(browser, editor_url: str, login_timeout: int, wait_timeout: int):
+    browser.get(editor_url)
+    WebDriverWait(browser, wait_timeout).until(lambda d: d.execute_script("return document.readyState") in ("interactive", "complete"))
+
+    if _visible_login_links(browser):
+        logged_in = _wait_for_manual_login(browser, login_timeout)
+        if not logged_in:
+            raise RuntimeError("秀米登录未完成，已超过等待时间。")
+        browser.get(editor_url)
+
+    _wait_editor_ready(browser, wait_timeout)
 
 
 def _set_input_value(browser, css_selector: str, value: str):
@@ -251,8 +286,25 @@ def _wait_for_save_result(browser, old_url: str, timeout: int) -> tuple[str, str
             return "url_changed", current_url
         if current_url != old_url and "/for/new/" not in current_url:
             return "url_changed", current_url
+        if _visible_login_links(browser):
+            return "login_required", current_url
         time.sleep(1)
     return "timeout", browser.current_url
+
+
+def _save_diagnostics(browser) -> dict:
+    try:
+        body_text = browser.execute_script("return document.body ? document.body.innerText : '';") or ""
+    except Exception:
+        body_text = ""
+    body_text = re.sub(r"\s+", " ", str(body_text)).strip()
+    return {
+        "url": browser.current_url,
+        "login_links": len(_visible_login_links(browser)),
+        "save_buttons": len(browser.find_elements(By.CSS_SELECTOR, "button.btn-img.op-btn.save")),
+        "editable": len(browser.find_elements(By.XPATH, '//*[@contenteditable="true"]')),
+        "body_excerpt": body_text[:240],
+    }
 
 
 def publish_xiumi_draft(
@@ -284,29 +336,28 @@ def publish_xiumi_draft(
     final_author = (author or "").strip()
     final_source_url = (source_url or "").strip()
 
-    profile_dir_value = profile_dir or getattr(config, "XIUMI_PROFILE_DIR", "./output/selenium_cache/xiumi-profile")
+    profile_dir_path = _resolve_xiumi_profile_dir(profile_dir, leave_open=leave_open)
     editor_url_value = editor_url or getattr(config, "XIUMI_EDITOR_URL", "https://xiumi.us/studio/v5?lang=zh_CN#/paper/for/new")
     save_timeout_value = int(save_timeout or getattr(config, "XIUMI_SAVE_WAIT_SECONDS", 30))
     login_timeout_value = int(login_timeout or getattr(config, "XIUMI_LOGIN_WAIT_SECONDS", 600))
 
-    browser = _make_xiumi_browser(pathlib.Path(profile_dir_value).resolve())
+    print(f"xiumi_profile_dir: {profile_dir_path}")
+    browser = _make_xiumi_browser(profile_dir_path, detach=leave_open)
     result = {
         "status": "unknown",
         "editor_url": "",
         "draft_url": "",
         "title": final_title,
+        "profile_dir": str(profile_dir_path),
     }
     try:
         print("秀米：正在打开图文编辑器")
-        browser.get(editor_url_value)
-        _wait_editor_ready(browser, max(15, getattr(config, "WAIT_TIMEOUT", 15)))
-
-        if _visible_login_links(browser):
-            logged_in = _wait_for_manual_login(browser, login_timeout_value)
-            if not logged_in:
-                raise RuntimeError("秀米登录未完成，已超过等待时间。")
-            browser.get(editor_url_value)
-            _wait_editor_ready(browser, max(15, getattr(config, "WAIT_TIMEOUT", 15)))
+        _open_xiumi_editor(
+            browser,
+            editor_url_value,
+            login_timeout_value,
+            max(15, getattr(config, "WAIT_TIMEOUT", 15)),
+        )
 
         print("秀米：正在填充标题、作者、摘要和正文")
         _set_input_value(browser, "input.title", final_title)
@@ -337,6 +388,25 @@ def publish_xiumi_draft(
             before_url = browser.current_url
             _click_save(browser)
             save_state, current_url = _wait_for_save_result(browser, before_url, save_timeout_value)
+            if save_state == "login_required":
+                print("xiumi_save_status: login_required")
+                logged_in = _wait_for_manual_login(browser, login_timeout_value)
+                if not logged_in:
+                    raise RuntimeError("秀米保存前登录未完成，已超过等待时间。")
+                browser.get(editor_url_value)
+                _wait_editor_ready(browser, max(15, getattr(config, "WAIT_TIMEOUT", 15)))
+                _set_input_value(browser, "input.title", final_title)
+                _set_input_value(browser, "input.author", final_author)
+                if final_source_url:
+                    _set_input_value(browser, "input.link", final_source_url)
+                if final_digest:
+                    _set_input_value(browser, "textarea.desc", final_digest)
+                _set_editor_html(browser, content_html)
+                _mark_xiumi_document_dirty(browser)
+                before_url = browser.current_url
+                print("秀米：登录完成，重新点击保存")
+                _click_save(browser)
+                save_state, current_url = _wait_for_save_result(browser, before_url, save_timeout_value)
             result["editor_url"] = current_url
             if save_state == "url_changed":
                 print("xiumi_save_status: url_changed")
@@ -346,6 +416,16 @@ def publish_xiumi_draft(
                 result["draft_url"] = current_url
             else:
                 print("xiumi_save_status: uncertain")
+                diagnostics = _save_diagnostics(browser)
+                print(
+                    "xiumi_save_diagnostics: "
+                    f"login_links={diagnostics['login_links']}, "
+                    f"save_buttons={diagnostics['save_buttons']}, "
+                    f"editable={diagnostics['editable']}, "
+                    f"url={diagnostics['url']}"
+                )
+                if diagnostics.get("body_excerpt"):
+                    print(f"xiumi_page_excerpt: {diagnostics['body_excerpt']}")
                 print("xiumi_hint: 保存按钮已点击，但未在等待时间内确认 URL 从 for/new 变为正式草稿地址，请在浏览器中检查是否已保存。")
                 print(f"xiumi_editor_url: {current_url}")
                 result["status"] = "uncertain"
@@ -369,7 +449,14 @@ def main():
     parser.add_argument("--author", default="物理系学生会", help="Author to fill in Xiumi.")
     parser.add_argument("--digest", default="", help="Digest/summary to fill in Xiumi.")
     parser.add_argument("--source-url", default="", help="Original link field to fill in Xiumi.")
-    parser.add_argument("--profile-dir", default=getattr(config, "XIUMI_PROFILE_DIR", "./output/selenium_cache/xiumi-profile"))
+    parser.add_argument(
+        "--profile-dir",
+        default="",
+        help=(
+            "Optional browser profile directory. By default normal runs reuse config.XIUMI_PROFILE_DIR; "
+            "--leave-open runs use an isolated one-time profile to avoid locking the next run."
+        ),
+    )
     parser.add_argument("--editor-url", default=getattr(config, "XIUMI_EDITOR_URL", "https://xiumi.us/studio/v5?lang=zh_CN#/paper/for/new"))
     parser.add_argument("--save-timeout", type=int, default=getattr(config, "XIUMI_SAVE_WAIT_SECONDS", 30))
     parser.add_argument("--login-timeout", type=int, default=getattr(config, "XIUMI_LOGIN_WAIT_SECONDS", 600))

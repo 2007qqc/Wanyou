@@ -363,6 +363,8 @@ def _summarize_item(item: dict) -> str:
 
 def _compress_item_content(item: dict, summary: str) -> str:
     content = item.get("content", "") or ""
+    if item.get("source") == PHYSICS_SECTION and re.search(r"(?:内容摘要|报告摘要)[：:]", content):
+        return _clean_text(content)
     budget = max(80, ITEM_TOTAL_UNIT_LIMIT - _estimate_units(summary) - 20)
     cleaned = _clean_text(content)
     if _estimate_units(summary) + _estimate_units(cleaned) <= ITEM_TOTAL_UNIT_LIMIT:

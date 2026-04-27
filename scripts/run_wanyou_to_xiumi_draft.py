@@ -33,6 +33,14 @@ def main():
     parser.add_argument("--digest", default="", help="Digest to fill in Xiumi draft.")
     parser.add_argument("--source-url", default="", help="Original link to fill in Xiumi draft.")
     parser.add_argument("--xiumi-dry-run", action="store_true", help="Fill Xiumi editor without clicking save.")
+    parser.add_argument(
+        "--xiumi-profile-dir",
+        default="",
+        help=(
+            "Optional Xiumi browser profile directory. By default --leave-open uses an isolated one-time "
+            "profile; normal runs reuse the configured profile."
+        ),
+    )
     parser.add_argument("--leave-open", action="store_true", help="Leave Xiumi browser window open after the script exits.")
     args = parser.parse_args()
 
@@ -66,6 +74,7 @@ def main():
         author=args.author,
         digest=args.digest,
         source_url=args.source_url,
+        profile_dir=args.xiumi_profile_dir,
         dry_run=args.xiumi_dry_run,
         leave_open=args.leave_open,
     )

@@ -23,7 +23,7 @@ def get_selenium_browser_name() -> str:
     return name
 
 
-def make_browser_options(browser_name: str, profile_dir: str, *, headless: bool = False):
+def make_browser_options(browser_name: str, profile_dir: str, *, headless: bool = False, detach: bool = False):
     options = ChromeOptions() if browser_name == "chrome" else EdgeOptions()
     options.page_load_strategy = getattr(config, "PAGE_LOAD_STRATEGY", "eager")
     if headless:
@@ -34,7 +34,8 @@ def make_browser_options(browser_name: str, profile_dir: str, *, headless: bool 
     options.add_argument("--no-first-run")
     options.add_argument("--no-default-browser-check")
     options.add_argument("--disable-default-apps")
-    options.add_argument("--remote-debugging-pipe")
+    if not detach:
+        options.add_argument("--remote-debugging-pipe")
     options.add_argument("--ignore-certificate-errors")
     options.add_argument("--allow-insecure-localhost")
     options.add_argument("--disable-gpu")
@@ -47,6 +48,8 @@ def make_browser_options(browser_name: str, profile_dir: str, *, headless: bool 
     options.add_argument(f"--user-data-dir={profile_dir}")
     try:
         options.add_experimental_option("excludeSwitches", ["enable-logging"])
+        if detach:
+            options.add_experimental_option("detach", True)
     except Exception:
         pass
     return options

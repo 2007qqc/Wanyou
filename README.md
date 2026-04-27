@@ -236,7 +236,7 @@ $env:WECHAT_MP_APPSECRET = "your-appsecret"
 ## 保存到秀米草稿
 
 项目现在提供“直接打开秀米图文编辑器、自动填充内容并点击保存”的脚本。
-这是浏览器自动化方案：如果你尚未登录秀米，脚本会打开 Edge 并等待你手动登录；登录完成后回到终端按回车，脚本会继续填充正文并保存草稿。
+这是浏览器自动化方案：如果你尚未登录秀米，脚本会打开浏览器并等待你手动登录；登录完成后程序会自动检测登录状态并继续填充正文、保存草稿。
 
 已有 `.html + .md` 输出时，直接推送到秀米：
 
@@ -262,11 +262,19 @@ python scripts/run_wanyou_to_xiumi_draft.py
 python scripts/run_wanyou_to_xiumi_draft.py --with-login
 ```
 
+如果保存后想保留秀米浏览器窗口，使用：
+
+```bash
+python scripts/run_wanyou_to_xiumi_draft.py --with-login --leave-open
+```
+
 默认行为：
 - 直接打开秀米图文编辑器 `paper/for/new`
 - 优先读取同名 Markdown，将其转换为内联富文本后写入秀米正文
 - 若正文中仍引用本地图片，会自动转成 data URL 内嵌，减少秀米端丢图概率
 - 点击保存后，若当前地址从 `for/new` 变为正式草稿地址，会在终端输出 `xiumi_draft_url`
+- 普通运行复用 `config.XIUMI_PROFILE_DIR` 保存登录态；使用 `--leave-open` 时默认创建一次性独立浏览器 profile，避免保留的浏览器锁住下一轮运行
+- 如需指定 profile，可加 `--profile-dir`（单独推送脚本）或 `--xiumi-profile-dir`（从零全量脚本）；不要在旧浏览器仍打开时复用同一个 profile
 
 当前限制：
 - 秀米登录仍需人工完成
@@ -512,8 +520,10 @@ python skills\wanyou-full-run\scripts\run_wanyou_full_run.py --with-login --todo
 3. 生成最终主题化 Markdown；
 4. 导出 HTML 富文本。
 
+当前已实现：
+- 将“打分 raw + 富文本 + 秀米草稿”压成单条 Python 指令：`python scripts/run_wanyou_to_xiumi_draft.py --with-login`
+
 尚未实现的部分：
-- 将“打分 raw + 富文本 + 秀米草稿”完全压成单条 Python 指令；
 - 将秀米草稿保存做成无需人工登录的正式接口方案。
 
 按这个workflow生成一系列新的万有预报快捷指令：
@@ -529,3 +539,5 @@ python skills\wanyou-full-run\scripts\run_wanyou_full_run.py --with-login --todo
 
 ## 已知问题
 已处理：LLM 正文清洗现在只保留最终富文本合成前的一层。爬虫落盘、公众号入库和 ranked raw 阶段只做本地规则格式整理，以减少过度清洗、加速运行并节省 token。
+
+已处理：物理系学术报告会保留原网页中的报告时间、地点、报告人和内容摘要；最终富文本清洗会跳过该版块，避免把原始摘要洗掉。
