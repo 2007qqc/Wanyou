@@ -223,8 +223,9 @@ def _decode_response_text(resp) -> str:
     if match:
         header_encoding = match.group(1).strip()
 
-    candidates = [header_encoding, resp.encoding, resp.apparent_encoding, "utf-8", "gb18030"]
+    candidates = ["utf-8", "gb18030", header_encoding, resp.encoding, resp.apparent_encoding]
     content = resp.content or b""
+    decoded_candidates = []
 
     for encoding in candidates:
         if not encoding:
@@ -233,9 +234,10 @@ def _decode_response_text(resp) -> str:
             text = content.decode(encoding)
         except Exception:
             continue
-        if "\ufffd" not in text and not re.search(r"[\u00c0-\u00ff]{4,}", text):
-            return text
+        decoded_candidates.append(text)
 
+    if decoded_candidates:
+        return max(decoded_candidates, key=_text_quality_score)
     return content.decode("utf-8", errors="replace")
 
 

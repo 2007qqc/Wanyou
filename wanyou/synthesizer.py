@@ -92,7 +92,7 @@ def build_augmented_markdown(markdown_text: str, current_markdown_path: str = ""
         for item in enriched:
             parts.append(f"## {item['title']}")
             parts.append("")
-            if item.get("summary"):
+            if item.get("summary") and not _summary_repeats_content(item.get("summary", ""), item.get("content", "")):
                 parts.append(f"要点透视：{item['summary']}")
                 parts.append("")
             if item.get("content"):
@@ -395,6 +395,14 @@ def _clean_text(text: str) -> str:
     cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
     cleaned = re.sub(r"[ \t]+", " ", cleaned)
     return cleaned.strip()
+
+
+def _summary_repeats_content(summary: str, content: str) -> bool:
+    summary_key = re.sub(r"\s+", "", summary or "")
+    content_key = re.sub(r"\s+", "", content or "")
+    if not summary_key or not content_key:
+        return False
+    return content_key.startswith(summary_key) or summary_key == content_key
 
 
 def _estimate_units(text: str) -> int:

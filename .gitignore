@@ -3,3 +3,4 @@ output
 *.pyc
 .DS_Store
 llm_decisions.jsonl
+.venv/

@@ -87,7 +87,8 @@ def crawl_hall(doc, filename_jpg, base_images_dir):
             for date in item["date"]:
                 doc.write(f"{date}\n\n")
         doc.write(f"地点: {item['location']}\n\n")
-        doc.write(f"票价:\n{re.sub('\\n', '\\n\\n', item['price'])}\n\n")
+        price_text = re.sub("\n", "\n\n", item["price"])
+        doc.write(f"票价:\n{price_text}\n\n")
         if item.get("path"):
             image_path = os.path.relpath(item["path"], start=markdown_dir).replace("\\", "/")
             doc.write(f"![]({image_path})\n\n")

@@ -10,7 +10,7 @@
 
 - 教务通知、家园网、图书馆、新清华学堂、物理系学术报告等来源抓取
 - 清华统一身份认证登录，教务和家园网共享一次浏览器会话
-- 二次认证人工接管：程序弹出 Edge，用户完成认证后回到终端继续
+- 二次认证人工接管：程序弹出浏览器，用户完成认证后会自动继续
 - 公众号 API 抓取与摘要输出
 - LLM 辅助筛选、正文清洗、摘要压缩和栏目导语生成
 - Markdown、H5 HTML、Browser Agent payload 输出
@@ -19,57 +19,77 @@
 ## 环境要求
 
 - Python 3.10+
-- Microsoft Edge
-- Edge WebDriver
+- Windows: Microsoft Edge
+- macOS: Google Chrome 或 Microsoft Edge
+- Selenium 4 会优先通过 Selenium Manager 自动匹配浏览器驱动
 - 如需 DOCX 导出，还需要本机安装 `pandoc`
 
 安装依赖：
 
-```powershell
+```bash
 python -m pip install -r requirements.txt
 python -m pip install PyYAML
 ```
+
+### macOS 快速配置
+
+macOS 推荐使用项目虚拟环境和 Chrome：
+
+```bash
+bash scripts/setup_macos.sh
+source .venv/bin/activate
+export WANYOU_SELENIUM_BROWSER=chrome
+python skills/wanyou-full-run/scripts/run_wanyou_full_run.py --public-only --skip-docx
+```
+
+如需 DOCX 导出：
+
+```bash
+brew install pandoc
+```
+
+浏览器可通过 `WANYOU_SELENIUM_BROWSER` 切换，支持 `chrome` 和 `edge`。macOS 默认使用 `chrome`，Windows 默认使用 `edge`。
 
 ## 快速运行
 
 只运行公开来源，适合烟测：
 
-```powershell
-python skills\wanyou-full-run\scripts\run_wanyou_full_run.py --public-only --skip-docx
+```bash
+python skills/wanyou-full-run/scripts/run_wanyou_full_run.py --public-only --skip-docx
 ```
 
 运行完整流程，包括统一身份认证来源：
 
-```powershell
-python skills\wanyou-full-run\scripts\run_wanyou_full_run.py --with-login
+```bash
+python skills/wanyou-full-run/scripts/run_wanyou_full_run.py --with-login
 ```
 
 跳过公众号，只调试校内网站：
 
-```powershell
-python skills\wanyou-full-run\scripts\run_wanyou_full_run.py --with-login --skip-wechat --skip-docx
+```bash
+python skills/wanyou-full-run/scripts/run_wanyou_full_run.py --with-login --skip-wechat --skip-docx
 ```
 
 生成整体 ranked raw，用于审稿和排查筛选结果：
 
-```powershell
-python skills\wanyou-full-run\scripts\run_wanyou_full_run.py --with-login --ranked-raw
+```bash
+python skills/wanyou-full-run/scripts/run_wanyou_full_run.py --with-login --ranked-raw
 ```
 
-`--ranked-raw` 会爬取各平台信息，不下载图片；只做一周内发布的硬性时效筛选和正文清洗，不做摘要压缩。随后 LLM 会按物理系本科生视角为各版块条目打重要性分数并排序，输出 `*_ranked_raw.md`。
+`--ranked-raw` 会爬取各平台信息，不下载图片；只做一周内发布的硬性时效筛选和本地规则格式整理，不做 LLM 正文清洗，也不做摘要压缩。随后 LLM 会按物理系本科生视角为各版块条目打重要性分数并排序，输出 `*_ranked_raw.md`。
 
-如果希望连 LLM 正文清洗也跳过，只保留基础格式整理和 LLM 打分排序：
+兼容旧命令的写法如下；当前行为等价于 `--ranked-raw`，不会触发 LLM 正文清洗：
 
-```powershell
-python skills\wanyou-full-run\scripts\run_wanyou_full_run.py --with-login --ranked-raw-no-clean
+```bash
+python skills/wanyou-full-run/scripts/run_wanyou_full_run.py --with-login --ranked-raw-no-clean
 ```
 
 该模式输出 `*_ranked_raw_no_clean.md`，适合快速审稿或排查爬虫原始正文。
 
 按 TODO 标准直接生成完整富文本：先生成 ranked raw，再按每类最高分条目挑选 3-5 条，最后输出主题化 Markdown 和 HTML：
 
-```powershell
-python skills\wanyou-full-run\scripts\run_wanyou_full_run.py --with-login --todo-richtext
+```bash
+python skills/wanyou-full-run/scripts/run_wanyou_full_run.py --with-login --todo-richtext
 ```
 
 ## 单模块测试命令
@@ -232,14 +252,14 @@ python scripts\publish_xiumi_draft.py output\xxx\wanyou_xxx.html --markdown outp
 
 从零开始跑完整万有预报并直接送到秀米：
 
-```powershell
-python scripts\run_wanyou_to_xiumi_draft.py
+```bash
+python scripts/run_wanyou_to_xiumi_draft.py
 ```
 
 如需同时抓取统一认证站点：
 
-```powershell
-python scripts\run_wanyou_to_xiumi_draft.py --with-login
+```bash
+python scripts/run_wanyou_to_xiumi_draft.py --with-login
 ```
 
 默认行为：
@@ -259,6 +279,18 @@ python scripts\run_wanyou_to_xiumi_draft.py --with-login
 ```text
 WECHAT_PUBLIC_API_KEY
 ```
+
+### macOS / Linux 临时设置
+
+只对当前终端窗口有效：
+
+```bash
+export WECHAT_PUBLIC_API_KEY="your-key"
+echo "$WECHAT_PUBLIC_API_KEY"
+python scripts/run_wanyou_module.py wechat --md-only
+```
+
+如果希望每次打开终端都生效，可以把 `export WECHAT_PUBLIC_API_KEY="your-key"` 写入 `~/.zshrc`。
 
 ### 当前 PowerShell 临时设置
 
@@ -322,14 +354,13 @@ python scripts\run_wanyou_module.py wechat --md-only
 
 ## 登录与二次认证
 
-教务通知和家园网默认使用同一套清华统一身份认证账号密码。程序会打开可见 Edge 浏览器，并尽量只做一次统一认证。
+教务通知和家园网默认使用同一套清华统一身份认证账号密码。程序会打开可见浏览器，并尽量只做一次统一认证。
 
 如果进入二次认证：
 
-1. 程序会保留可见 Edge 浏览器窗口。
+1. 程序会保留可见浏览器窗口。
 2. 用户在浏览器中手动完成二次认证。
-3. 回到终端按回车。
-4. 程序继续抓取教务和家园网。
+3. 程序自动检测登录状态，成功后继续抓取教务和家园网，无需回终端按回车。
 
 调试教务和家园网时建议先运行：
 
@@ -446,7 +477,7 @@ LLM_MODEL = "deepseek-chat"
 # TODO
 ## 打分raw
 
-现在程序添加了爬取所有未过时、仅经过清洗的raw信息并让LLM打分的功能模块，
+现在程序添加了爬取所有未过时、仅经过本地规则格式整理的 raw 信息并让 LLM 打分的功能模块，
 目标是向万有预报制作者提供无遗漏、有权重的参考。但是现在LLM分配的打分
 尚不符合物理系同学的信息获取偏好。计划让Codex根据下面的“物理系本科生阅读偏好”
 信息来修改prompt，每次修改后运行一遍打分raw，检验LLM评分是否符合物理系本科生偏好
@@ -458,7 +489,7 @@ LLM_MODEL = "deepseek-chat"
 python skills\wanyou-full-run\scripts\run_wanyou_full_run.py --with-login --ranked-raw
 ```
 
-如果只想看原始正文和排序，不走 LLM 正文清洗：
+兼容旧命令的写法如下；当前 `--ranked-raw` 默认也不走 LLM 正文清洗：
 
 ```powershell
 python skills\wanyou-full-run\scripts\run_wanyou_full_run.py --with-login --ranked-raw-no-clean
@@ -497,4 +528,4 @@ python skills\wanyou-full-run\scripts\run_wanyou_full_run.py --with-login --todo
 在`tendency.md`中给出了一个模板。
 
 ## 已知问题
-LLM清洗有重复、过度问题，需要减少重复清洗层数，最好全程仅一次清洗，达到信息无损且无乱码效果。
+已处理：LLM 正文清洗现在只保留最终富文本合成前的一层。爬虫落盘、公众号入库和 ranked raw 阶段只做本地规则格式整理，以减少过度清洗、加速运行并节省 token。

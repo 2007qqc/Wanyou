@@ -17,10 +17,10 @@ def _strip_images(text: str) -> str:
     return text
 
 
-def _clean_text(text: str, title: str = "", *, clean_with_llm: bool = True) -> str:
+def _clean_text(text: str, title: str = "", *, clean_with_llm: bool = False) -> str:
     text = _strip_images(text)
     if clean_with_llm:
-        cleaned = clean_crawled_markdown(text, source=title or "raw") or text
+        cleaned = clean_crawled_markdown(text, source=title or "raw", use_llm=True) or text
     else:
         cleaned = _rule_clean_markdown(text)
     cleaned = re.sub(r"\n{3,}", "\n\n", cleaned or "")
@@ -137,7 +137,7 @@ def _score_section_items(section_name: str, items: List[dict]) -> Dict[str, dict
     return scores
 
 
-def build_ranked_raw_markdown(markdown_text: str, current_markdown_path: str = "", *, clean_with_llm: bool = True) -> str:
+def build_ranked_raw_markdown(markdown_text: str, current_markdown_path: str = "", *, clean_with_llm: bool = False) -> str:
     _ = current_markdown_path
     rendered_sections = []
     for section in parse_markdown_document(markdown_text):

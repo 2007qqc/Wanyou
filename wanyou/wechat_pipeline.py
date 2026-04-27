@@ -10,7 +10,7 @@ from wanyou.temporal_filter import assess_temporal_relevance
 from wanyou.utils_issue_filter import current_issue_cutoff
 from wanyou.wechat_client import create_api_session, dedupe_items, fetch_articles, resolve_fakeids
 from wanyou.wechat_content import enrich_items_with_content
-from wanyou.utils_html import clean_crawled_markdown
+from wanyou.utils_html import _rule_clean_markdown
 from wanyou.utils_llm import chat_complete
 
 
@@ -107,7 +107,7 @@ def mark_items_for_md(items):
 
 def _fallback_wechat_summary(item):
     for candidate in (item.get("digest") or "", item.get("content") or ""):
-        cleaned = clean_crawled_markdown(candidate, source=item.get("title", "wechat"))
+        cleaned = _rule_clean_markdown(candidate)
         if cleaned:
             cleaned = re.sub(r"\s+", " ", cleaned).strip()
             return cleaned[: getattr(config, "LLM_SUMMARY_MAX_CHARS", 100)]
@@ -116,8 +116,8 @@ def _fallback_wechat_summary(item):
 
 def summarize_wechat_item(item):
     title = (item.get("title") or "").strip()
-    digest = clean_crawled_markdown(item.get("digest") or "", source=title)
-    content = clean_crawled_markdown(item.get("content") or "", source=title)
+    digest = _rule_clean_markdown(item.get("digest") or "")
+    content = _rule_clean_markdown(item.get("content") or "")
     snippet = "\n".join(part for part in [digest, content] if part).strip()
     if not snippet:
         return ""
@@ -294,8 +294,8 @@ def collect_wechat_items(days_limit=None):
 
     for index, item in enumerate(items, start=1):
         print(f"公众号：正在总结保留推送 {index}/{len(items)}：{(item.get('account_keyword') or '未知公众号')} - {(item.get('title') or '无标题')[:40]}")
-        item["content"] = clean_crawled_markdown(item.get("content") or "", source=item.get("title", "wechat"))
-        item["digest"] = clean_crawled_markdown(item.get("digest") or "", source=item.get("title", "wechat"))
+        item["content"] = _rule_clean_markdown(item.get("content") or "")
+        item["digest"] = _rule_clean_markdown(item.get("digest") or "")
         item["summary"] = summarize_wechat_item(item)
     mark_items_for_md(items)
     visible_count = sum(1 for item in items if item.get("include_in_md", True))

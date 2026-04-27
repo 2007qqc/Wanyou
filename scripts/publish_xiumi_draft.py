@@ -7,10 +7,7 @@ import re
 import sys
 import time
 
-from selenium import webdriver
 from selenium.webdriver.common.by import By
-from selenium.webdriver.edge.options import Options
-from selenium.webdriver.edge.service import Service
 from selenium.webdriver.support.ui import WebDriverWait
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -19,6 +16,7 @@ if str(ROOT) not in sys.path:
 
 import config
 from generators.wechat_inline import markdown_to_wechat_inline_html
+from wanyou.browser import get_selenium_browser_name, make_browser_options, make_webdriver
 
 
 def _configure_console():
@@ -105,30 +103,10 @@ def _make_xiumi_browser(profile_dir: pathlib.Path):
     os.makedirs(config.SELENIUM_CACHE_DIR, exist_ok=True)
     os.environ.setdefault("SE_CACHE_PATH", os.path.abspath(config.SELENIUM_CACHE_DIR))
 
-    options = Options()
-    options.page_load_strategy = getattr(config, "PAGE_LOAD_STRATEGY", "eager")
-    options.add_argument("--log-level=3")
-    options.add_argument("--disable-logging")
-    options.add_argument("--silent")
-    options.add_argument("--no-first-run")
-    options.add_argument("--no-default-browser-check")
-    options.add_argument("--disable-default-apps")
-    options.add_argument("--remote-debugging-pipe")
-    options.add_argument("--ignore-certificate-errors")
-    options.add_argument("--allow-insecure-localhost")
-    options.add_argument("--disable-gpu")
-    options.add_argument("--disable-extensions")
-    options.add_argument("--disable-background-networking")
-    options.add_argument("--disable-component-update")
-    options.add_argument("--disable-dev-shm-usage")
-    options.add_argument("--disable-features=msEdgeSidebarV2,EdgeWalletCheckout,msPdfAadIntegration")
-    options.add_argument(f"--user-data-dir={profile_dir}")
-    try:
-        options.add_experimental_option("excludeSwitches", ["enable-logging"])
-    except Exception:
-        pass
-    service = Service(log_output=os.devnull)
-    browser = webdriver.Edge(options=options, service=service)
+    browser_name = get_selenium_browser_name()
+    options = make_browser_options(browser_name, str(profile_dir), headless=False)
+    browser = make_webdriver(browser_name, options)
+    browser._wanyou_browser_name = browser_name
     if getattr(config, "PAGE_LOAD_TIMEOUT", 0):
         browser.set_page_load_timeout(config.PAGE_LOAD_TIMEOUT)
     return browser

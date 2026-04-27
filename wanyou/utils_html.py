@@ -237,11 +237,11 @@ def _normalize_body_headings(text, title=""):
 
 
 
-def clean_crawled_markdown(text, source=""):
+def clean_crawled_markdown(text, source="", *, use_llm=False):
     cleaned = _rule_clean_markdown(text)
     if not cleaned:
         return ""
-    if getattr(config, "RAW_SKIP_LLM_CLEAN", False):
+    if not use_llm or getattr(config, "RAW_SKIP_LLM_CLEAN", False):
         return cleaned
 
     prompt = (
@@ -263,6 +263,61 @@ def clean_crawled_markdown(text, source=""):
         if _clean_quality_score(candidate) >= _clean_quality_score(cleaned):
             cleaned = candidate
     return cleaned
+
+
+def clean_markdown_document_with_llm(markdown_text, source_prefix="final"):
+    sections = []
+    current_section = None
+    current_item = None
+
+    def finish_item():
+        nonlocal current_item
+        if current_item is not None and current_section is not None:
+            current_section["items"].append(current_item)
+            current_item = None
+
+    for raw_line in (markdown_text or "").splitlines():
+        line = raw_line.rstrip()
+        if line.startswith("# "):
+            finish_item()
+            if current_section is not None:
+                sections.append(current_section)
+            current_section = {"title": line[2:].strip(), "items": []}
+            continue
+        if line.startswith("## "):
+            if current_section is None:
+                current_section = {"title": "未分类", "items": []}
+            finish_item()
+            current_item = {"title": line[3:].strip(), "body_lines": []}
+            continue
+        if current_item is not None:
+            current_item["body_lines"].append(raw_line)
+
+    finish_item()
+    if current_section is not None:
+        sections.append(current_section)
+
+    rendered_sections = []
+    for section in sections:
+        parts = [f"# {section['title']}", ""]
+        for item in section["items"]:
+            title = item["title"]
+            body = "\n".join(item.get("body_lines", [])).strip()
+            if not body:
+                continue
+            cleaned = clean_crawled_markdown(
+                body,
+                source=f"{source_prefix}:{title}",
+                use_llm=True,
+            )
+            cleaned = _normalize_body_headings(cleaned, title=title)
+            cleaned = _rule_clean_markdown(cleaned)
+            parts.append(f"## {title}")
+            parts.append("")
+            parts.append(cleaned)
+            parts.append("")
+        rendered_sections.append("\n".join(parts).rstrip())
+    return "\n\n".join(section for section in rendered_sections if section).strip() + "\n"
 
 
 

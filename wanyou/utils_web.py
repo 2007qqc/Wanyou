@@ -3,45 +3,24 @@ import tempfile
 from pathlib import Path
 
 import requests
-from selenium import webdriver
-from selenium.webdriver.edge.options import Options
-from selenium.webdriver.edge.service import Service
 
 import config
+from wanyou.browser import get_selenium_browser_name, make_browser_options, make_webdriver
 
 
 def make_browser(headless=None):
     os.makedirs(config.SELENIUM_CACHE_DIR, exist_ok=True)
     os.environ.setdefault("SE_CACHE_PATH", os.path.abspath(config.SELENIUM_CACHE_DIR))
-    profile_dir = tempfile.mkdtemp(prefix="edge-profile-", dir=os.path.abspath(config.SELENIUM_CACHE_DIR))
-    options = Options()
-    options.page_load_strategy = getattr(config, "PAGE_LOAD_STRATEGY", "eager")
+    browser_name = get_selenium_browser_name()
+    profile_dir = tempfile.mkdtemp(
+        prefix=f"{browser_name}-profile-",
+        dir=os.path.abspath(config.SELENIUM_CACHE_DIR),
+    )
     use_headless = config.HEADLESS if headless is None else bool(headless)
-    if use_headless:
-        options.add_argument("--headless")
-    options.add_argument("--log-level=3")
-    options.add_argument("--disable-logging")
-    options.add_argument("--silent")
-    options.add_argument("--no-first-run")
-    options.add_argument("--no-default-browser-check")
-    options.add_argument("--disable-default-apps")
-    options.add_argument("--remote-debugging-pipe")
-    options.add_argument("--ignore-certificate-errors")
-    options.add_argument("--allow-insecure-localhost")
-    options.add_argument("--disable-gpu")
-    options.add_argument("--disable-extensions")
-    options.add_argument("--disable-background-networking")
-    options.add_argument("--disable-component-update")
-    options.add_argument("--disable-dev-shm-usage")
-    options.add_argument("--disable-features=msEdgeSidebarV2,EdgeWalletCheckout,msPdfAadIntegration")
-    options.add_argument(f"--user-data-dir={profile_dir}")
-    try:
-        options.add_experimental_option("excludeSwitches", ["enable-logging"])
-    except Exception:
-        pass
-    service = Service(log_output=os.devnull)
-    browser = webdriver.Edge(options=options, service=service)
+    options = make_browser_options(browser_name, profile_dir, headless=use_headless)
+    browser = make_webdriver(browser_name, options)
     browser._codex_profile_dir = profile_dir
+    browser._wanyou_browser_name = browser_name
     if config.PAGE_LOAD_TIMEOUT:
         browser.set_page_load_timeout(config.PAGE_LOAD_TIMEOUT)
     return browser

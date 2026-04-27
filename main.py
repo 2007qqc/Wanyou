@@ -3,8 +3,6 @@ import os
 import re
 import sys
 
-import pypandoc
-
 import config
 from generators.browser_agent import export_browser_agent_payload
 from generators.h5_generator import decorate_markdown_with_theme, export_h5
@@ -18,6 +16,7 @@ from wanyou.raw_ranker import build_ranked_raw_markdown, build_selected_raw_mark
 from wanyou.synthesizer import build_augmented_markdown
 from wanyou.unified_auth import authenticate_shared_browser
 from wanyou.utils_auth import prompt_credentials
+from wanyou.utils_html import clean_markdown_document_with_llm
 from wanyou.wechat_pipeline import collect_wechat_items, write_sectioned_md_stream
 
 
@@ -130,6 +129,8 @@ def _fallback_markdown(stage_errors: dict) -> str:
 
 
 def convert_markdown_to_docx(markdown_path: str, docx_path: str, base_images_dir: str):
+    import pypandoc
+
     pypandoc.convert_file(
         markdown_path,
         to="docx",
@@ -305,7 +306,7 @@ def run_pipeline(
         final_markdown = build_ranked_raw_markdown(
             raw_markdown,
             current_markdown_path=raw_markdown_path,
-            clean_with_llm=not ranked_raw_skip_clean,
+            clean_with_llm=False,
         )
         final_markdown_path = ranked_raw_path
     elif todo_richtext:
@@ -313,7 +314,7 @@ def run_pipeline(
         ranked_markdown = build_ranked_raw_markdown(
             raw_markdown,
             current_markdown_path=raw_markdown_path,
-            clean_with_llm=True,
+            clean_with_llm=False,
         )
         with open(ranked_raw_path, "w", encoding="utf-8") as f:
             f.write(ranked_markdown)
@@ -324,13 +325,24 @@ def run_pipeline(
             f.write(selected_raw_markdown)
 
         print("正在将入选条目合成为最终富文本万有预报...")
-        final_markdown = build_augmented_markdown(
-            selected_raw_markdown,
-            current_markdown_path=todo_selected_raw_path,
-        ) if synthesize else selected_raw_markdown
+        if synthesize:
+            selected_raw_markdown = clean_markdown_document_with_llm(
+                selected_raw_markdown,
+                source_prefix="最终富文本清洗",
+            )
+            final_markdown = build_augmented_markdown(
+                selected_raw_markdown,
+                current_markdown_path=todo_selected_raw_path,
+            )
+        else:
+            final_markdown = selected_raw_markdown
         final_markdown = decorate_markdown_with_theme(final_markdown, final_markdown_path)
     else:
-        final_markdown = build_augmented_markdown(raw_markdown, current_markdown_path=raw_markdown_path) if synthesize else raw_markdown
+        if synthesize:
+            cleaned_raw_markdown = clean_markdown_document_with_llm(raw_markdown, source_prefix="最终富文本清洗")
+            final_markdown = build_augmented_markdown(cleaned_raw_markdown, current_markdown_path=raw_markdown_path)
+        else:
+            final_markdown = raw_markdown
         final_markdown = decorate_markdown_with_theme(final_markdown, final_markdown_path)
     with open(final_markdown_path, "w", encoding="utf-8") as f:
         f.write(final_markdown)

@@ -2,6 +2,9 @@
 集中管理可调参数。
 """
 
+import os
+import platform
+
 from wanyou.prompt_preferences import KEEP_DROP_PREFERENCE_RULES
 
 # 登录凭据改为运行时输入，不在配置中保存。
@@ -12,6 +15,11 @@ PAGE_LOAD_TIMEOUT = 30
 PAGE_LOAD_STRATEGY = "eager"
 WAIT_TIMEOUT = 15
 SLEEP_SECONDS = 3
+UNIFIED_AUTH_MANUAL_WAIT_SECONDS = 600
+SELENIUM_BROWSER = os.environ.get(
+    "WANYOU_SELENIUM_BROWSER",
+    "chrome" if platform.system().lower() == "darwin" else "edge",
+).lower()
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/70.0.3538.25 Safari/537.36"

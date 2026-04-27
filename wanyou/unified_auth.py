@@ -1,6 +1,7 @@
 import hashlib
 import json
 import os
+import time
 
 from selenium.common.exceptions import NoSuchElementException
 from selenium.webdriver.common.by import By
@@ -193,7 +194,7 @@ def _build_auth_failure_message(browser, stage_label: str, login_error: str) -> 
     if login_error:
         return f"{stage_label}登录未通过：{login_error}"
     if "/do/off/ui/auth/login/check" in current_url or "二次认证" in title:
-        return f"{stage_label}已进入统一认证二次认证页面，当前程序尚不能自动完成该步骤"
+        return f"{stage_label}已进入统一认证二次认证页面，需要在浏览器中人工完成"
     if "/f/login" in current_url or "登录" in title:
         return f"{stage_label}统一认证流程未完成，程序已填写用户名并尝试提交，但登录页未放行"
     return f"{stage_label}登录未通过，请检查统一认证流程或稍后重试"
@@ -216,6 +217,52 @@ def _fill_credentials_and_submit(browser, username: str, password: str):
 
     _install_login_probe(browser)
     _trigger_encrypted_login(browser)
+
+
+def _has_auth_success_hint(browser) -> bool:
+    try:
+        text = browser.execute_script("return document.body ? document.body.innerText : '';") or ""
+    except Exception:
+        text = ""
+    text = str(text)
+    return any(marker in text for marker in ("认证成功", "登录成功", "已完成认证", "success", "Success"))
+
+
+def _manual_auth_completed(browser, initial_url: str, *, allow_navigation: bool = False) -> bool:
+    current_url = (browser.current_url or "").lower()
+    if not _looks_like_login_page(browser) and "id.tsinghua.edu.cn" not in current_url:
+        return True
+
+    if not allow_navigation and not _has_auth_success_hint(browser):
+        return False
+
+    try:
+        browser.get(initial_url)
+    except Exception:
+        return False
+
+    current_url = (browser.current_url or "").lower()
+    return not _looks_like_login_page(browser) and "id.tsinghua.edu.cn" not in current_url
+
+
+def _wait_for_manual_auth(browser, initial_url: str, timeout_seconds: int) -> bool:
+    deadline = time.time() + max(int(timeout_seconds or 0), 1)
+
+    while time.time() < deadline:
+        login_error = _get_login_error(browser)
+        if login_error and _looks_like_login_page(browser):
+            raise RuntimeError(login_error)
+
+        current_url = (browser.current_url or "").lower()
+        if not _looks_like_login_page(browser) and "id.tsinghua.edu.cn" not in current_url:
+            return True
+
+        if _manual_auth_completed(browser, initial_url):
+            return True
+
+        time.sleep(1)
+
+    return _manual_auth_completed(browser, initial_url, allow_navigation=True)
 
 
 def authenticate_shared_browser(username: str, password: str, debug_dir: str, initial_url: str, stage_label: str = "统一认证"):
@@ -257,19 +304,25 @@ def authenticate_shared_browser(username: str, password: str, debug_dir: str, in
         print(f"{stage_label}登录成功")
         return browser
 
+    browser_name = getattr(browser, "_wanyou_browser_name", "浏览器")
     print(_build_auth_failure_message(browser, stage_label, login_error))
-    print("已打开可见 Edge 浏览器。你可以在该窗口中完成统一认证或二次认证。")
-    input("确认浏览器中已经完成登录后，按回车继续...")
+    wait_seconds = int(getattr(config, "UNIFIED_AUTH_MANUAL_WAIT_SECONDS", 600))
+    print(f"已打开可见 {browser_name} 浏览器。请在该窗口中完成统一认证或二次认证。")
+    print(f"程序会自动检测登录状态并继续执行，无需回终端按回车；最长等待 {wait_seconds} 秒。")
 
     try:
-        browser.get(initial_url)
-    except Exception:
-        pass
+        manual_ok = _wait_for_manual_auth(browser, initial_url, wait_seconds)
+    except Exception as exc:
+        dump_browser_snapshot(browser, debug_dir, "shared_manual_auth_failed")
+        browser.quit()
+        raise RuntimeError(f"{stage_label}人工认证未完成：{exc}") from exc
+
     dump_browser_snapshot(browser, debug_dir, "shared_after_manual_auth")
 
-    if _looks_like_login_page(browser) or "id.tsinghua.edu.cn" in (browser.current_url or "").lower():
+    if (not manual_ok) or _looks_like_login_page(browser) or "id.tsinghua.edu.cn" in (browser.current_url or "").lower():
         message = _build_auth_failure_message(browser, stage_label, _get_login_error(browser))
         browser.quit()
         raise RuntimeError(message)
 
+    print(f"{stage_label}人工认证完成，继续执行")
     return browser

@@ -23,8 +23,8 @@ def main():
     parser.add_argument("--skip-docx", action="store_true", help="Skip DOCX export.")
     parser.add_argument("--skip-html", action="store_true", help="Skip HTML export.")
     parser.add_argument("--skip-agent-payload", action="store_true", help="Skip browser-agent payload export.")
-    parser.add_argument("--ranked-raw", action="store_true", help="Collect raw items, hard-filter by recent publish date, clean text, and LLM-rank by importance.")
-    parser.add_argument("--ranked-raw-no-clean", action="store_true", help="Run ranked raw, but skip LLM text cleaning before importance ranking.")
+    parser.add_argument("--ranked-raw", action="store_true", help="Collect raw items, hard-filter by recent publish date, and LLM-rank by importance without LLM text cleaning.")
+    parser.add_argument("--ranked-raw-no-clean", action="store_true", help="Compatibility alias for --ranked-raw; ranked raw no longer runs LLM text cleaning.")
     parser.add_argument("--todo-richtext", action="store_true", help="Generate ranked raw, pick top items per section, then build final themed Markdown and HTML.")
     args = parser.parse_args()
 
