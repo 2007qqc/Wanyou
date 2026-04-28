@@ -137,10 +137,10 @@ WECHAT_FILTER_FALLBACK_KEEP = True
 
 # LLM 自动决策（yes/no）
 LLM_ENABLED = True
-LLM_PROVIDER = "deepseek"  # "zhipuai", "openai", "chatgpt", "deepseek", "gemini"
-LLM_MODEL = "deepseek-chat"
-LLM_API_KEY_ENV = ""
-LLM_BASE_URL = ""
+LLM_PROVIDER = os.environ.get("LLM_PROVIDER", "deepseek")  # "zhipuai", "openai", "chatgpt", "deepseek", "gemini"
+LLM_MODEL = os.environ.get("LLM_MODEL", "deepseek-v4-pro")
+LLM_API_KEY_ENV = os.environ.get("LLM_API_KEY_ENV", "")
+LLM_BASE_URL = os.environ.get("LLM_BASE_URL", "")
 LLM_TIMEOUT_SECONDS = 20
 LLM_LOG_PATH = "llm_decisions.jsonl"
 INTERACTIVE_REVIEW = False

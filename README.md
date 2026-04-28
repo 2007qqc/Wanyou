@@ -13,7 +13,7 @@
 - 二次认证人工接管：程序弹出浏览器，用户完成认证后会自动继续
 - 公众号 API 抓取与摘要输出
 - LLM 辅助筛选、正文清洗、摘要压缩和栏目导语生成
-- Markdown、H5 HTML、Browser Agent payload 输出
+- Markdown、H5 HTML输出、存微信公众平台/秀米草稿
 - 单模块测试运行，便于只测试公众号或某一个网站爬虫
 
 ## 环境要求
@@ -184,7 +184,7 @@ python skills\wanyou-llm-filter\scripts\run_wanyou_llm_filter.py output\xxx\wany
 ```
 
 
-## 保存到微信公众号草稿箱
+## 保存到微信公众号草稿箱（outdated）
 
 项目提供“只保存草稿、不自动发布”的脚本：
 
@@ -442,6 +442,101 @@ python skills\wanyou-full-run\scripts\run_wanyou_full_run.py --skip-docx
 LLM_ENABLED = True
 LLM_PROVIDER = "deepseek"
 LLM_MODEL = "deepseek-chat"
+```
+
+### DeepSeek API 接入
+
+项目默认把 DeepSeek 当作 OpenAI-compatible 接口来调用，实际请求路径见 [utils_llm.py](./wanyou/utils_llm.py)：
+
+- Base URL 默认值：`https://api.deepseek.com/v1`
+- Chat 接口路径：`/chat/completions`
+- 默认模型：`deepseek-chat`
+- 默认环境变量：`DEEPSEEK_API_KEY`
+
+对应配置项在 [config.py](./config.py)：
+
+```python
+LLM_PROVIDER = "deepseek"
+LLM_MODEL = "deepseek-v4-pro"
+DEEPSEEK_API_KEY_ENV = "DEEPSEEK_API_KEY"
+DEEPSEEK_BASE_URL = "https://api.deepseek.com/v1"
+```
+
+如果你使用 DeepSeek 官方兼容接口，通常不需要改代码，只需要设置 API key。
+
+#### PowerShell 临时设置
+
+只对当前终端有效：
+
+```powershell
+$env:DEEPSEEK_API_KEY = "your-deepseek-api-key"
+echo $env:DEEPSEEK_API_KEY
+python scripts\run_wanyou_module.py wechat --md-only
+```
+
+#### PowerShell 持久设置
+
+写入当前 Windows 用户环境变量：
+
+```powershell
+[Environment]::SetEnvironmentVariable("DEEPSEEK_API_KEY", "your-deepseek-api-key", "User")
+```
+
+写入后请重新打开 PowerShell 或 IDE 终端；如果不想重开，可以同步到当前会话：
+
+```powershell
+$env:DEEPSEEK_API_KEY = [Environment]::GetEnvironmentVariable("DEEPSEEK_API_KEY", "User")
+echo $env:DEEPSEEK_API_KEY
+```
+
+#### macOS / Linux 设置
+
+当前终端临时生效：
+
+```bash
+export DEEPSEEK_API_KEY="your-deepseek-api-key"
+echo "$DEEPSEEK_API_KEY"
+python scripts/run_wanyou_module.py wechat --md-only
+```
+
+如需每次打开终端自动生效，可把这行 `export DEEPSEEK_API_KEY="your-deepseek-api-key"` 写入 `~/.zshrc` 或 `~/.bashrc`。
+
+#### 更换模型或兼容网关
+
+如果你使用代理网关、第三方兼容层或自定义模型名，可以在不改代码的情况下覆盖：
+
+```powershell
+$env:DEEPSEEK_API_KEY = "your-deepseek-api-key"
+$env:LLM_BASE_URL = "https://your-compatible-endpoint/v1"
+$env:LLM_API_KEY_ENV = "DEEPSEEK_API_KEY"
+```
+
+如需长期修改，建议直接调整 [config.py](./config.py) 中的：
+
+- `LLM_PROVIDER`
+- `LLM_MODEL`
+- `LLM_API_KEY_ENV`
+- `LLM_BASE_URL`
+
+#### 验证方法
+
+最简单的验证方式是先跑一个只依赖公开来源的小命令，看终端是否出现 `等待LLM输出中：...`，且最终没有 API 认证报错：
+
+```powershell
+python skills\wanyou-full-run\scripts\run_wanyou_full_run.py --public-only --ranked-raw-no-clean
+```
+
+如果 DeepSeek key 未生效，常见表现是：
+
+- 没有任何 LLM 结果，只走 fallback
+- 输出内容明显退化成规则排序
+- `llm_decisions.jsonl` 没有新增调用记录
+
+如果你已经设置了 key 但仍疑似未读取，请先检查：
+
+```powershell
+echo $env:DEEPSEEK_API_KEY
+python -c "import os; print(bool(os.getenv('DEEPSEEK_API_KEY')))"
 ```
 
 所有涉及 LLM 的步骤会输出具体进度，例如：
