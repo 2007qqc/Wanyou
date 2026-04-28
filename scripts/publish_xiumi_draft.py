@@ -4,6 +4,7 @@ import mimetypes
 import os
 import pathlib
 import re
+import shutil
 import sys
 import time
 
@@ -112,22 +113,16 @@ def _make_xiumi_browser(profile_dir: pathlib.Path, *, detach: bool = False):
     return browser
 
 
-def _default_xiumi_profile_dir() -> pathlib.Path:
-    return pathlib.Path(getattr(config, "XIUMI_PROFILE_DIR", "./output/selenium_cache/xiumi-profile"))
-
-
-def _unique_xiumi_profile_dir() -> pathlib.Path:
-    cache_dir = pathlib.Path(getattr(config, "SELENIUM_CACHE_DIR", "./output/selenium_cache"))
-    stamp = time.strftime("%Y%m%d_%H%M%S")
-    return cache_dir / f"xiumi-profile-{stamp}-{os.getpid()}"
-
-
-def _resolve_xiumi_profile_dir(profile_dir: str = "", *, leave_open: bool = False) -> pathlib.Path:
-    if (profile_dir or "").strip():
-        return pathlib.Path(profile_dir).expanduser().resolve()
-    if leave_open:
-        return _unique_xiumi_profile_dir().resolve()
-    return _default_xiumi_profile_dir().expanduser().resolve()
+def _cleanup_profile_dir(profile_dir: pathlib.Path, retries: int = 5, delay_seconds: float = 1.0) -> bool:
+    if not profile_dir.exists():
+        return True
+    for _ in range(max(1, retries)):
+        try:
+            shutil.rmtree(profile_dir)
+            return True
+        except Exception:
+            time.sleep(delay_seconds)
+    return not profile_dir.exists()
 
 
 def _wait_editor_ready(browser, timeout: int):
@@ -336,13 +331,22 @@ def publish_xiumi_draft(
     final_author = (author or "").strip()
     final_source_url = (source_url or "").strip()
 
+<<<<<<< HEAD
     profile_dir_path = _resolve_xiumi_profile_dir(profile_dir, leave_open=leave_open)
+=======
+    profile_dir_value = profile_dir or getattr(config, "XIUMI_PROFILE_DIR", "./output/selenium_cache/xiumi-profile")
+    profile_dir_path = pathlib.Path(profile_dir_value).resolve()
+>>>>>>> a6a20af0ae02f5f51b3d2292d2d15545a1b1daf7
     editor_url_value = editor_url or getattr(config, "XIUMI_EDITOR_URL", "https://xiumi.us/studio/v5?lang=zh_CN#/paper/for/new")
     save_timeout_value = int(save_timeout or getattr(config, "XIUMI_SAVE_WAIT_SECONDS", 30))
     login_timeout_value = int(login_timeout or getattr(config, "XIUMI_LOGIN_WAIT_SECONDS", 600))
 
+<<<<<<< HEAD
     print(f"xiumi_profile_dir: {profile_dir_path}")
     browser = _make_xiumi_browser(profile_dir_path, detach=leave_open)
+=======
+    browser = _make_xiumi_browser(profile_dir_path)
+>>>>>>> a6a20af0ae02f5f51b3d2292d2d15545a1b1daf7
     result = {
         "status": "unknown",
         "editor_url": "",
@@ -437,6 +441,11 @@ def publish_xiumi_draft(
     finally:
         if not leave_open:
             browser.quit()
+            cleaned = _cleanup_profile_dir(profile_dir_path)
+            if cleaned:
+                print(f"xiumi_profile_cleanup: removed ({profile_dir_path})")
+            else:
+                print(f"xiumi_profile_cleanup: failed ({profile_dir_path})")
 
 
 def main():

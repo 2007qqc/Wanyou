@@ -4,7 +4,11 @@ from typing import Dict, List
 
 import config
 from wanyou.filter_debug import log_filter_decision
-from wanyou.prompt_preferences import KEEP_DROP_PREFERENCE_RULES, RAW_RANKING_SCORE_GUIDE
+from wanyou.prompt_preferences import (
+    KEEP_DROP_PREFERENCE_RULES,
+    RAW_RANKING_SCORE_GUIDE,
+    RAW_RANKING_TRAINING_EXAMPLES,
+)
 from wanyou.synthesizer import parse_markdown_document
 from wanyou.utils_html import _rule_clean_markdown, clean_crawled_markdown
 from wanyou.utils_issue_filter import current_issue_cutoff, parse_datetime_text
@@ -82,6 +86,56 @@ def _fallback_score(item: dict) -> dict:
     return {"score": max(0, min(100, score)), "reason": "fallback_keyword_score"}
 
 
+def _apply_score_guardrails(section_name: str, item: dict, score: int, reason: str = "") -> dict:
+    title = str(item.get("title", "") or "")
+    content = str(item.get("content", "") or "")
+    text = f"{title}\n{content}"
+    head_text = f"{title}\n{content[:600]}"
+    lowered_reason = (reason or "").strip()
+    adjusted = int(score)
+    tags: List[str] = []
+    is_publicity_like = bool(re.search(r"口号|揭幕|亮点预告|抢先看|开幕式|倒计时|预热", text, re.I))
+    is_showcase_like = bool(re.search(r"风采展|优秀个人|人物专访|人物故事|成长故事|校友故事", title, re.I))
+
+    if re.search(r"文化素质教育讲座|生态文明十五讲|新人文讲座|王国维学术讲座|学术之道|世界文学", text, re.I):
+        adjusted = min(adjusted, 20)
+        tags.append("cap_general_culture_lecture")
+    if re.search(r"英语风采演讲|英语竞赛|演讲大赛|辩论赛|礼仪课堂|工作坊|嘉年华|文创|游园|诗乐会|音乐会|文化节", text, re.I):
+        adjusted = min(adjusted, 35)
+        tags.append("cap_general_activity")
+    if is_publicity_like:
+        adjusted = min(adjusted, 25)
+        tags.append("cap_publicity")
+    if re.search(r"研究生|博士生|博士后|教师|教职工|课程建设|学位授权点建设", text, re.I):
+        adjusted = min(adjusted, 10)
+        tags.append("cap_non_undergrad")
+
+    if section_name == "物理系学术报告" or re.search(r"物理系学术报告|学术报告|colloquium|seminar", title, re.I):
+        adjusted = max(adjusted, 80)
+        tags.append("floor_physics_report")
+    if (
+        not is_publicity_like
+        and not is_showcase_like
+        and re.search(r"暑期学校|暑校|SRT|星火|学推|挑战杯|科研训练|保研", text, re.I)
+        and re.search(
+        r"报名|申请|截止|公示|结果|决赛|获奖|答辩|观摩",
+        head_text,
+        re.I,
+        )
+    ):
+        adjusted = max(adjusted, 55)
+        tags.append("floor_actionable_training")
+    if re.search(r"宿舍|熄灯|交通|通行|第二成绩单|志愿工时|献血", head_text, re.I):
+        adjusted = max(adjusted, 45)
+        tags.append("floor_life_impact")
+
+    final_reason = lowered_reason
+    if tags:
+        suffix = "；score_guardrail=" + ",".join(tags)
+        final_reason = (f"{lowered_reason}{suffix}" if lowered_reason else suffix.lstrip("；"))[:180]
+    return {"score": max(0, min(100, adjusted)), "reason": final_reason}
+
+
 def _score_section_items(section_name: str, items: List[dict]) -> Dict[str, dict]:
     if not items:
         return {}
@@ -100,11 +154,13 @@ def _score_section_items(section_name: str, items: List[dict]) -> Dict[str, dict
         + "不要删除任何条目，只需为每条信息按对物理系本科生的重要性打 0-100 分。"
         + KEEP_DROP_PREFERENCE_RULES
         + RAW_RANKING_SCORE_GUIDE
+        + RAW_RANKING_TRAINING_EXAMPLES
         + "优先看截止时间、活动时间、发布者、面向群体和正文内容。"
         + "你的分数应尽量贴近真实物理系本科生的信息获取偏好，而不是平均意义上的校园资讯热度。"
         + "如果同一条内容在 tendency.md 一类训练样本中会被认为偏低分，就不要因为文案热闹或发布者知名而抬高分数。"
+        + "先在心里判断它属于哪一档：高优先、中优先、低优先、极低优先，再从对应分段内给分，避免分数漂移。"
         + "请在 reason 中明确说明给分的核心依据，例如：课业影响、科研训练价值、物理相关性、是否处于报名/决赛/结果阶段、是否只对研究生有效、是否只是一般宣传。"
-        + 'JSON 输出格式：{"items":[{"index":1,"score":80,"reason":"..."}]}。'
+        + 'JSON 输出格式：{"items":[{"index":1,"score":80,"band":"high","reason":"..."}]}。'
     )
     user_prompt = f"版块: {section_name}\n\n" + "\n\n".join(candidates)
     result = chat_complete(
@@ -130,10 +186,13 @@ def _score_section_items(section_name: str, items: List[dict]) -> Dict[str, dict
             score = int(float(entry.get("score")))
         except Exception:
             continue
-        scores[index] = {
-            "score": max(0, min(100, score)),
-            "reason": str(entry.get("reason") or "llm_score")[:120],
-        }
+        item = items[int(index) - 1] if 0 < int(index) <= len(items) else {}
+        scores[index] = _apply_score_guardrails(
+            section_name,
+            item,
+            max(0, min(100, score)),
+            str(entry.get("reason") or "llm_score")[:120],
+        )
     return scores
 
 
