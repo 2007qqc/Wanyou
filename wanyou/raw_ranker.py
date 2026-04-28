@@ -1,5 +1,7 @@
 import json
+import os
 import re
+from functools import lru_cache
 from typing import Dict, List
 
 import config
@@ -13,6 +15,7 @@ from wanyou.synthesizer import parse_markdown_document
 from wanyou.utils_html import _rule_clean_markdown, clean_crawled_markdown
 from wanyou.utils_issue_filter import current_issue_cutoff, parse_datetime_text
 from wanyou.utils_llm import chat_complete
+from wanyou.run_clock import effective_run_date
 
 
 def _strip_images(text: str) -> str:
@@ -52,7 +55,116 @@ def _is_recent_publish(item: dict) -> tuple[bool, str, str]:
         return True, "no_parseable_publish_date_keep", raw_date
     if parsed >= cutoff:
         return True, "publish_recent", parsed.isoformat(timespec="minutes")
+    if _has_current_or_future_date(item.get("content", "") or ""):
+        return True, "publish_old_but_effective", parsed.isoformat(timespec="minutes")
     return False, "publish_older_than_cutoff", parsed.isoformat(timespec="minutes")
+
+
+def _normalize_heading(text: str) -> str:
+    return re.sub(r"\s+", "", text or "").strip()
+
+
+@lru_cache(maxsize=32)
+def _load_tendency_reference(section_name: str) -> str:
+    """Load bounded section-specific preference samples from tendency.md."""
+    aliases = {_normalize_heading(section_name)}
+    if section_name == "图书馆信息":
+        aliases.add("图书馆")
+
+    path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "tendency.md"))
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            text = f.read()
+    except OSError:
+        return ""
+
+    headings = list(re.finditer(r"^(#{1,3})\s+(.+?)\s*$", text, re.M))
+    for pos, heading in enumerate(headings):
+        title = _normalize_heading(heading.group(2))
+        if title not in aliases:
+            continue
+        level = len(heading.group(1))
+        start = heading.end()
+        end = len(text)
+        for next_heading in headings[pos + 1 :]:
+            if len(next_heading.group(1)) <= level:
+                end = next_heading.start()
+                break
+        section_text = text[start:end].strip()
+        if "重要性评分" not in section_text and "物理系本科生偏好评分" not in section_text:
+            return ""
+        section_text = re.sub(r"\n{3,}", "\n\n", section_text)
+        examples = _summarize_tendency_examples(section_text)
+        if examples:
+            return examples[:3200]
+        return section_text[:3000]
+    return ""
+
+
+def _summarize_tendency_examples(section_text: str) -> str:
+    examples = []
+    matches = list(re.finditer(r"^##\s+(.+?)\s*$", section_text, re.M))
+    for pos, match in enumerate(matches):
+        title = match.group(1).strip()
+        start = match.end()
+        end = matches[pos + 1].start() if pos + 1 < len(matches) else len(section_text)
+        body = section_text[start:end]
+        score_match = re.search(
+            r"物理系本科生偏好评分[：:]\s*(\d{1,3})(?:\s*/\s*100)?(?:[（(]([^）)]*)[）)])?",
+            body,
+        )
+        if not score_match:
+            score_match = re.search(r"重要性评分[：:]\s*(\d{1,3})(?:\s*/\s*100)?", body)
+        if not score_match:
+            continue
+        score = max(0, min(100, int(score_match.group(1))))
+        reason = (score_match.group(2) or "").strip() if len(score_match.groups()) >= 2 else ""
+        reason_line = re.search(r"(?:原因|理由|排序依据)[：:]\s*([^\n]+)", body)
+        if reason_line:
+            reason = reason_line.group(1).strip()
+        examples.append(f"- {title} => {score}/100；{reason}" if reason else f"- {title} => {score}/100")
+    if not examples:
+        return ""
+    return "当前版块人工评分样例：\n" + "\n".join(examples)
+
+
+def _all_detected_dates_before_run(text: str) -> bool:
+    dates = []
+    for pattern in (
+        r"20\d{2}[年\-/.]\d{1,2}[月\-/.]\d{1,2}(?:日)?(?:\s*\d{1,2}[:：]\d{2})?",
+        r"\d{1,2}月\d{1,2}日(?:\s*\d{1,2}[:：]\d{2})?",
+    ):
+        for match in re.finditer(pattern, text or ""):
+            parsed = parse_datetime_text(match.group(0))
+            if parsed is not None:
+                dates.append(parsed.date())
+    if not dates:
+        return False
+    today = effective_run_date()
+    return all(day < today for day in dates)
+
+
+def _has_current_or_future_date(text: str) -> bool:
+    for pattern in (
+        r"20\d{2}[年\-/.]\d{1,2}[月\-/.]\d{1,2}(?:日)?(?:\s*\d{1,2}[:：]\d{2})?",
+        r"\d{1,2}月\d{1,2}日(?:\s*\d{1,2}[:：]\d{2})?",
+    ):
+        for match in re.finditer(pattern, text or ""):
+            parsed = parse_datetime_text(match.group(0))
+            if parsed is not None and parsed.date() >= effective_run_date():
+                return True
+    return False
+
+
+def _lib_expired_low_score_cap(title: str, text: str) -> int:
+    title_text = title or ""
+    if re.search(r"LaTeX|Word|论文写作", title_text, re.I):
+        return 20
+    if re.search(r"EndNote|NoteExpress|投稿指南|学术规范|知网AI|数据库课堂", title_text, re.I):
+        return 15
+    if re.search(r"知识产权|专利|金融|经济|WRDS|Capital IQ|医药|许可|商业|会计", f"{title_text}\n{text}", re.I):
+        return 10
+    return 12
 
 
 def _fallback_score(item: dict) -> dict:
@@ -106,7 +218,10 @@ def _apply_score_guardrails(section_name: str, item: dict, score: int, reason: s
     if is_publicity_like:
         adjusted = min(adjusted, 25)
         tags.append("cap_publicity")
-    if re.search(r"研究生|博士生|博士后|教师|教职工|课程建设|学位授权点建设", text, re.I):
+    if (
+        re.search(r"研究生|博士生|博士后|教师|教职工|课程建设|学位授权点建设", text, re.I)
+        and not re.search(r"本科生|本科|全体学生|广大师生", text, re.I)
+    ):
         adjusted = min(adjusted, 10)
         tags.append("cap_non_undergrad")
 
@@ -129,6 +244,23 @@ def _apply_score_guardrails(section_name: str, item: dict, score: int, reason: s
         adjusted = max(adjusted, 45)
         tags.append("floor_life_impact")
 
+    if section_name == "图书馆信息":
+        if re.search(r"开馆|闭馆|考试周|阅览室|座位|预约|借还|数据库访问|校外访问|资源访问|服务调整|系统维护", text, re.I):
+            adjusted = max(adjusted, 90)
+            tags.append("floor_lib_service_impact")
+        if re.search(r"知识产权|专利|金融|经济|WRDS|Capital IQ|医药|许可|商业|会计", text, re.I):
+            adjusted = min(adjusted, 15)
+            tags.append("cap_lib_weak_topic")
+        if re.search(r"EndNote|NoteExpress|投稿指南|学术规范|知网AI|数据库课堂", title, re.I):
+            adjusted = min(adjusted, 20)
+            tags.append("cap_lib_research_tool")
+        if re.search(r"LaTeX|Word|论文写作", title, re.I):
+            adjusted = min(adjusted, 30)
+            tags.append("cap_lib_research_tool")
+        if _all_detected_dates_before_run(text):
+            adjusted = min(adjusted, _lib_expired_low_score_cap(title, text))
+            tags.append("cap_expired_activity")
+
     final_reason = lowered_reason
     if tags:
         suffix = "；score_guardrail=" + ",".join(tags)
@@ -139,7 +271,15 @@ def _apply_score_guardrails(section_name: str, item: dict, score: int, reason: s
 def _score_section_items(section_name: str, items: List[dict]) -> Dict[str, dict]:
     if not items:
         return {}
-    fallback = {str(i): _fallback_score(item) for i, item in enumerate(items, start=1)}
+    fallback = {}
+    for i, item in enumerate(items, start=1):
+        fallback_meta = _fallback_score(item)
+        fallback[str(i)] = _apply_score_guardrails(
+            section_name,
+            item,
+            int(fallback_meta.get("score", 0)),
+            str(fallback_meta.get("reason") or "fallback_keyword_score"),
+        )
     if not getattr(config, "LLM_ENABLED", False):
         return fallback
 
@@ -151,6 +291,9 @@ def _score_section_items(section_name: str, items: List[dict]) -> Dict[str, dict
         )
     system_prompt = (
         "你在为清华大学物理系本科生整理《万有预报》 raw 全量信息。"
+        + f"当前运行日期是 {effective_run_date().isoformat()}。"
+        + "请先据此判断活动、报名、影响时间是否已经过去；过期条目要明显降权，但仍应保留低分区间内的相对排序，不要把所有低分项目都压成同一个分数。"
+        + "人工评分样例中的非零分代表该信息的基准偏好；如果候选条目已经过期，应在这个基准上降权，同时保持专利/金融/医药、文献工具、LaTeX/Word 等类别之间的相对差异。仍在当前或未来生效的长期通知可以保留高分。"
         + "不要删除任何条目，只需为每条信息按对物理系本科生的重要性打 0-100 分。"
         + KEEP_DROP_PREFERENCE_RULES
         + RAW_RANKING_SCORE_GUIDE
@@ -158,15 +301,24 @@ def _score_section_items(section_name: str, items: List[dict]) -> Dict[str, dict
         + "优先看截止时间、活动时间、发布者、面向群体和正文内容。"
         + "你的分数应尽量贴近真实物理系本科生的信息获取偏好，而不是平均意义上的校园资讯热度。"
         + "如果同一条内容在 tendency.md 一类训练样本中会被认为偏低分，就不要因为文案热闹或发布者知名而抬高分数。"
+        + "如果当前版块给出了人工评分样例，必须优先对齐样例中的“物理系本科生偏好评分”，不要沿用泛校园资讯的重要性评分。"
+        + "图书馆信息尤其要区分：开馆、考试周、自习座位、资源访问和服务调整等基础设施通知可高分；一般专利、金融、医药、数据库、文献工具或论文工具讲座通常低分。过期活动应降到低分区，但仍要参照 tendency.md 示例给低分项目排序。"
         + "先在心里判断它属于哪一档：高优先、中优先、低优先、极低优先，再从对应分段内给分，避免分数漂移。"
         + "请在 reason 中明确说明给分的核心依据，例如：课业影响、科研训练价值、物理相关性、是否处于报名/决赛/结果阶段、是否只对研究生有效、是否只是一般宣传。"
         + 'JSON 输出格式：{"items":[{"index":1,"score":80,"band":"high","reason":"..."}]}。'
     )
+    tendency_reference = _load_tendency_reference(section_name)
+    if tendency_reference:
+        system_prompt += (
+            "下面是 tendency.md 中与当前版块对应的人工偏好样例，请优先对齐这些样例的相对排序和分数尺度："
+            + tendency_reference
+        )
     user_prompt = f"版块: {section_name}\n\n" + "\n\n".join(candidates)
     result = chat_complete(
         system_prompt,
         user_prompt,
-        max_tokens=max(300, min(1600, 80 * len(items))),
+        model=getattr(config, "RAW_RANKING_LLM_MODEL", "") or None,
+        max_tokens=max(5000, min(8000, 900 * len(items))),
         temperature=0,
         task_label=f"正在为 raw 条目打分排序：{section_name}",
     )

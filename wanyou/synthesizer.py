@@ -304,6 +304,7 @@ def _select_items_with_llm(section_name: str, items: List[dict], limit: int) -> 
     result = chat_complete(
         system_prompt,
         user_prompt,
+        model=getattr(config, "SYNTHESIS_LLM_MODEL", "") or None,
         max_tokens=180,
         temperature=0,
         task_label=f"正在筛选{section_name}保留条目",
@@ -354,6 +355,7 @@ def _summarize_item(item: dict) -> str:
             f"输出不超过 {SUMMARY_HARD_LIMIT} 字，只输出摘要正文。"
         ),
         f"标题: {title}\n来源: {item.get('source', '')}\n正文:\n{content[:2500]}",
+        model=getattr(config, "SYNTHESIS_LLM_MODEL", "") or None,
         max_tokens=180,
         temperature=0,
         task_label=f"正在压缩单条信息篇幅：{title[:24]}",
@@ -378,6 +380,7 @@ def _compress_item_content(item: dict, summary: str) -> str:
                 f"输出控制在约 {budget} 字以内，可保留简短分行。"
             ),
             f"标题: {item.get('title', '')}\n正文:\n{content[:3500]}",
+            model=getattr(config, "SYNTHESIS_LLM_MODEL", "") or None,
             max_tokens=300,
             temperature=0,
             task_label=f"正在压缩正文内容：{item.get('title', '')[:24]}",
@@ -448,6 +451,7 @@ def _generate_transition(section_name: str, summaries: Iterable[str], has_items:
         result = chat_complete(
             getattr(config, "LLM_TRANSITION_SYSTEM_PROMPT", "请写一句栏目导语。"),
             f"栏目: {section_name}\n{joined}",
+            model=getattr(config, "SYNTHESIS_LLM_MODEL", "") or None,
             max_tokens=80,
             temperature=0,
             task_label=f"正在生成栏目导语：{section_name}",

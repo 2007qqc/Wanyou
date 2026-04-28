@@ -254,6 +254,7 @@ def clean_crawled_markdown(text, source="", *, use_llm=False):
     result = chat_complete(
         prompt,
         user_prompt,
+        model=getattr(config, "MARKDOWN_CLEAN_LLM_MODEL", "") or None,
         max_tokens=500,
         temperature=0,
         task_label=f"正在清洗正文格式：{(source or '正文')[:24]}",

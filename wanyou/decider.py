@@ -70,7 +70,8 @@ def should_copy_with_llm(site: str, title: str, date: str = "", snippet: str = "
     result = chat_complete(
         DECIDER_SYSTEM_PROMPT,
         context,
-        max_tokens=5,
+        model=getattr(config, "DECIDER_LLM_MODEL", "") or None,
+        max_tokens=64,
         temperature=0,
         task_label="正在判断条目是否保留",
     )

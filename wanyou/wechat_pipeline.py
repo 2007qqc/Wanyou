@@ -138,6 +138,7 @@ def summarize_wechat_item(item):
     result = chat_complete(
         system_prompt,
         user_prompt,
+        model=getattr(config, "WECHAT_SUMMARY_LLM_MODEL", "") or None,
         max_tokens=160,
         temperature=0,
         task_label=f"正在总结公众号内容：{title[:24]}",

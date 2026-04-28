@@ -181,6 +181,7 @@ def _extract_report_fields_with_llm(title: str, publish_date: str, detail_url: s
     result = chat_complete(
         system_prompt,
         user_prompt,
+        model=getattr(config, "PHYSICS_EXTRACT_LLM_MODEL", "") or None,
         max_tokens=300,
         temperature=0,
         task_label=f"正在提取学术报告字段：{title[:24]}",

@@ -1,5 +1,6 @@
 ﻿import os
 import re
+from urllib.parse import urljoin
 
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as EC
@@ -38,6 +39,47 @@ def _extract_box_year(box) -> str:
                 return match.group(0)
     match = re.search(r"20\d{2}", box.text or "")
     return match.group(0) if match else ""
+
+
+def _extract_event_url(browser, block) -> str:
+    try:
+        url = browser.execute_script(
+            """
+const root = arguments[0];
+function normalize(value) {
+  if (!value) return "";
+  try { return new URL(value, window.location.href).href; } catch (e) { return value; }
+}
+function fromNode(node) {
+  if (!node) return "";
+  if (node.href) return normalize(node.href);
+  for (const attr of ["href", "data-href", "data-url", "data-link"]) {
+    const value = node.getAttribute && node.getAttribute(attr);
+    if (value) return normalize(value);
+  }
+  const onclick = (node.getAttribute && node.getAttribute("onclick")) || "";
+  const match = onclick.match(/(?:href\\s*=|open\\(|url\\s*=)\\s*['"]([^'"]+)/i);
+  if (match) return normalize(match[1]);
+  return "";
+}
+let direct = fromNode(root);
+if (direct) return direct;
+const link = root.querySelector && root.querySelector("a[href], [data-href], [data-url], [data-link]");
+direct = fromNode(link);
+if (direct) return direct;
+for (let node = root.parentElement; node; node = node.parentElement) {
+  direct = fromNode(node);
+  if (direct) return direct;
+}
+return "";
+""",
+            block,
+        )
+        if url:
+            return urljoin(browser.current_url, str(url))
+    except Exception:
+        pass
+    return ""
 
 
 def crawl_lib(doc, base_images_dir):
@@ -109,16 +151,26 @@ def crawl_lib(doc, base_images_dir):
         block = notice_blocks[item_index]
         item_index += 1
         try:
-            url = block.get_attribute("href")
-            if not url:
-                log_filter_decision(section="lib_event", title=block.text.strip(), status="dropped", reason="missing_url", stage="crawler_lib_event")
-                continue
-            if url in seen_urls:
-                log_filter_decision(section="lib_event", title=block.text.strip(), status="dropped", reason="duplicate_url", stage="crawler_lib_event", url=url)
-                continue
             title = block.text.strip()
+            url = _extract_event_url(browser, block)
+            if not url:
+                list_url = browser.current_url
+                try:
+                    browser.execute_script("arguments[0].scrollIntoView({block: 'center'}); arguments[0].click();", block)
+                except Exception:
+                    block.click()
+                if browser.current_url != list_url and "lib.tsinghua.edu.cn" in browser.current_url:
+                    url = browser.current_url
+                else:
+                    log_filter_decision(section="lib_event", title=title, status="dropped", reason="missing_url", stage="crawler_lib_event")
+                    continue
+            if url in seen_urls:
+                log_filter_decision(section="lib_event", title=title, status="dropped", reason="duplicate_url", stage="crawler_lib_event", url=url)
+                continue
+            seen_urls.add(url)
             log_filter_decision(section="lib_event", title=title, status="found", reason="list_item", stage="crawler_lib_event", url=url)
-            block.click()
+            if browser.current_url != url:
+                browser.get(url)
             if "lib.tsinghua.edu.cn" not in browser.current_url:
                 browser.back(); continue
             try:

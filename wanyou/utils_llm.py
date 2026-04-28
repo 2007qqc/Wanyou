@@ -251,31 +251,37 @@ def chat_complete(
     messages = _build_messages(system_prompt, user_prompt)
     content = None
 
-    if provider_name == "zhipuai" and not base_url and not api_key_env:
-        content = _call_zhipu_sdk(api_key, model_name, messages, temperature, max_tokens)
+    attempts = 2
+    for attempt in range(attempts):
+        if provider_name == "zhipuai" and not base_url and not api_key_env:
+            content = _call_zhipu_sdk(api_key, model_name, messages, temperature, max_tokens)
 
-    if content is None and provider_name in _OPENAI_COMPATIBLE_PROVIDERS:
-        content = _call_openai_compatible(
-            provider_name,
-            model_name,
-            api_key,
-            _resolve_base_url(provider_name, base_url),
-            messages,
-            timeout,
-            max_tokens,
-            temperature,
-        )
-    elif content is None and provider_name == "gemini":
-        content = _call_gemini_text(
-            model_name,
-            api_key,
-            _resolve_base_url(provider_name, base_url),
-            system_prompt,
-            user_prompt,
-            timeout,
-            max_tokens,
-            temperature,
-        )
+        if content is None and provider_name in _OPENAI_COMPATIBLE_PROVIDERS:
+            content = _call_openai_compatible(
+                provider_name,
+                model_name,
+                api_key,
+                _resolve_base_url(provider_name, base_url),
+                messages,
+                timeout,
+                max_tokens,
+                temperature,
+            )
+        elif content is None and provider_name == "gemini":
+            content = _call_gemini_text(
+                model_name,
+                api_key,
+                _resolve_base_url(provider_name, base_url),
+                system_prompt,
+                user_prompt,
+                timeout,
+                max_tokens,
+                temperature,
+            )
+        if content:
+            break
+        if attempt + 1 < attempts:
+            content = None
 
     if content is not None:
         _log_payload(
