@@ -125,6 +125,17 @@ def _cleanup_profile_dir(profile_dir: pathlib.Path, retries: int = 5, delay_seco
     return not profile_dir.exists()
 
 
+def _wait_for_user_before_closing_browser():
+    if not getattr(sys.stdin, "isatty", lambda: False)():
+        print("秀米：当前不是交互式命令行，跳过编辑等待并关闭浏览器。")
+        return
+    print("秀米：浏览器将保持打开，方便你继续检查或微调。确认已在秀米保存后，回到命令行按回车关闭浏览器并结束程序。")
+    try:
+        input()
+    except EOFError:
+        print("秀米：命令行输入已关闭，继续关闭浏览器。")
+
+
 def _wait_editor_ready(browser, timeout: int):
     WebDriverWait(browser, timeout).until(lambda d: d.execute_script("return document.readyState") == "complete")
     WebDriverWait(browser, timeout).until(lambda d: len(d.find_elements(By.CSS_SELECTOR, "button.btn-img.op-btn.save")) > 0)
@@ -331,22 +342,15 @@ def publish_xiumi_draft(
     final_author = (author or "").strip()
     final_source_url = (source_url or "").strip()
 
-<<<<<<< HEAD
-    profile_dir_path = _resolve_xiumi_profile_dir(profile_dir, leave_open=leave_open)
-=======
+    explicit_profile_dir = bool((profile_dir or "").strip())
     profile_dir_value = profile_dir or getattr(config, "XIUMI_PROFILE_DIR", "./output/selenium_cache/xiumi-profile")
     profile_dir_path = pathlib.Path(profile_dir_value).resolve()
->>>>>>> a6a20af0ae02f5f51b3d2292d2d15545a1b1daf7
     editor_url_value = editor_url or getattr(config, "XIUMI_EDITOR_URL", "https://xiumi.us/studio/v5?lang=zh_CN#/paper/for/new")
     save_timeout_value = int(save_timeout or getattr(config, "XIUMI_SAVE_WAIT_SECONDS", 30))
     login_timeout_value = int(login_timeout or getattr(config, "XIUMI_LOGIN_WAIT_SECONDS", 600))
 
-<<<<<<< HEAD
     print(f"xiumi_profile_dir: {profile_dir_path}")
-    browser = _make_xiumi_browser(profile_dir_path, detach=leave_open)
-=======
     browser = _make_xiumi_browser(profile_dir_path)
->>>>>>> a6a20af0ae02f5f51b3d2292d2d15545a1b1daf7
     result = {
         "status": "unknown",
         "editor_url": "",
@@ -434,13 +438,14 @@ def publish_xiumi_draft(
                 print(f"xiumi_editor_url: {current_url}")
                 result["status"] = "uncertain"
 
-        if not leave_open:
-            print("秀米：浏览器将保持打开，方便你继续检查或微调。完成后回到终端按回车结束脚本。")
-            input()
+        _wait_for_user_before_closing_browser()
         return result
     finally:
-        if not leave_open:
+        try:
             browser.quit()
+        except Exception as exc:
+            print(f"xiumi_browser_close: ignored ({exc})")
+        if not explicit_profile_dir:
             cleaned = _cleanup_profile_dir(profile_dir_path)
             if cleaned:
                 print(f"xiumi_profile_cleanup: removed ({profile_dir_path})")
@@ -462,15 +467,19 @@ def main():
         "--profile-dir",
         default="",
         help=(
-            "Optional browser profile directory. By default normal runs reuse config.XIUMI_PROFILE_DIR; "
-            "--leave-open runs use an isolated one-time profile to avoid locking the next run."
+            "Optional browser profile directory. By default the configured Xiumi profile is used and "
+            "cleaned after the browser closes; explicit profile directories are preserved."
         ),
     )
     parser.add_argument("--editor-url", default=getattr(config, "XIUMI_EDITOR_URL", "https://xiumi.us/studio/v5?lang=zh_CN#/paper/for/new"))
     parser.add_argument("--save-timeout", type=int, default=getattr(config, "XIUMI_SAVE_WAIT_SECONDS", 30))
     parser.add_argument("--login-timeout", type=int, default=getattr(config, "XIUMI_LOGIN_WAIT_SECONDS", 600))
     parser.add_argument("--dry-run", action="store_true", help="Open and fill editor, but do not click save.")
-    parser.add_argument("--leave-open", action="store_true", help="Leave the browser window open after the script exits.")
+    parser.add_argument(
+        "--leave-open",
+        action="store_true",
+        help="Compatibility option. The browser now stays open for editing by default until you press Enter.",
+    )
     args = parser.parse_args()
 
     publish_xiumi_draft(

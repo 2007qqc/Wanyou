@@ -37,11 +37,15 @@ def main():
         "--xiumi-profile-dir",
         default="",
         help=(
-            "Optional Xiumi browser profile directory. By default --leave-open uses an isolated one-time "
-            "profile; normal runs reuse the configured profile."
+            "Optional Xiumi browser profile directory. The default configured profile is cleaned after "
+            "the browser closes; explicit profile directories are preserved."
         ),
     )
-    parser.add_argument("--leave-open", action="store_true", help="Leave Xiumi browser window open after the script exits.")
+    parser.add_argument(
+        "--leave-open",
+        action="store_true",
+        help="Compatibility option. Xiumi now stays open for editing by default until you press Enter.",
+    )
     args = parser.parse_args()
 
     public_only = True

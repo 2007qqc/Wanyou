@@ -262,19 +262,14 @@ python scripts/run_wanyou_to_xiumi_draft.py
 python scripts/run_wanyou_to_xiumi_draft.py --with-login
 ```
 
-如果保存后想保留秀米浏览器窗口，使用：
-
-```bash
-python scripts/run_wanyou_to_xiumi_draft.py --with-login --leave-open
-```
-
 默认行为：
 - 直接打开秀米图文编辑器 `paper/for/new`
 - 优先读取同名 Markdown，将其转换为内联富文本后写入秀米正文
 - 若正文中仍引用本地图片，会自动转成 data URL 内嵌，减少秀米端丢图概率
 - 点击保存后，若当前地址从 `for/new` 变为正式草稿地址，会在终端输出 `xiumi_draft_url`
-- 普通运行复用 `config.XIUMI_PROFILE_DIR` 保存登录态；使用 `--leave-open` 时默认创建一次性独立浏览器 profile，避免保留的浏览器锁住下一轮运行
-- 如需指定 profile，可加 `--profile-dir`（单独推送脚本）或 `--xiumi-profile-dir`（从零全量脚本）；不要在旧浏览器仍打开时复用同一个 profile
+- 保存完成后浏览器会保持打开，方便继续在秀米中人工检查或微调；确认已在秀米保存编辑后，回到命令行按回车，程序会关闭浏览器并结束
+- 默认使用 `config.XIUMI_PROFILE_DIR` 并在关闭浏览器后清理，避免旧缓存锁住下一轮运行
+- 如需保留某个固定 profile，可加 `--profile-dir`（单独推送脚本）或 `--xiumi-profile-dir`（从零全量脚本）；显式指定的 profile 不会被自动删除
 
 当前限制：
 - 秀米登录仍需人工完成
