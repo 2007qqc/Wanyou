@@ -17,7 +17,7 @@ if str(ROOT) not in sys.path:
 
 import config
 from generators.wechat_inline import markdown_to_wechat_inline_html
-from wanyou.browser import get_selenium_browser_name, make_browser_options, make_webdriver
+from wanyou.browser import browser_supports_profile_dir, get_selenium_browser_name, make_browser_options, make_webdriver
 
 
 def _configure_console():
@@ -100,11 +100,12 @@ def _first_summary_line(markdown_text: str) -> str:
 
 
 def _make_xiumi_browser(profile_dir: pathlib.Path, *, detach: bool = False):
-    profile_dir.mkdir(parents=True, exist_ok=True)
     os.makedirs(config.SELENIUM_CACHE_DIR, exist_ok=True)
     os.environ.setdefault("SE_CACHE_PATH", os.path.abspath(config.SELENIUM_CACHE_DIR))
 
     browser_name = get_selenium_browser_name()
+    if browser_supports_profile_dir(browser_name):
+        profile_dir.mkdir(parents=True, exist_ok=True)
     options = make_browser_options(browser_name, str(profile_dir), headless=False, detach=detach)
     browser = make_webdriver(browser_name, options)
     browser._wanyou_browser_name = browser_name
@@ -445,7 +446,7 @@ def publish_xiumi_draft(
             browser.quit()
         except Exception as exc:
             print(f"xiumi_browser_close: ignored ({exc})")
-        if not explicit_profile_dir:
+        if not explicit_profile_dir and browser_supports_profile_dir(getattr(browser, "_wanyou_browser_name", "")):
             cleaned = _cleanup_profile_dir(profile_dir_path)
             if cleaned:
                 print(f"xiumi_profile_cleanup: removed ({profile_dir_path})")

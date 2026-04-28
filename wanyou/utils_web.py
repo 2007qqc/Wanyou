@@ -5,21 +5,24 @@ from pathlib import Path
 import requests
 
 import config
-from wanyou.browser import get_selenium_browser_name, make_browser_options, make_webdriver
+from wanyou.browser import browser_supports_profile_dir, get_selenium_browser_name, make_browser_options, make_webdriver
 
 
 def make_browser(headless=None):
     os.makedirs(config.SELENIUM_CACHE_DIR, exist_ok=True)
     os.environ.setdefault("SE_CACHE_PATH", os.path.abspath(config.SELENIUM_CACHE_DIR))
     browser_name = get_selenium_browser_name()
-    profile_dir = tempfile.mkdtemp(
-        prefix=f"{browser_name}-profile-",
-        dir=os.path.abspath(config.SELENIUM_CACHE_DIR),
-    )
+    profile_dir = ""
+    if browser_supports_profile_dir(browser_name):
+        profile_dir = tempfile.mkdtemp(
+            prefix=f"{browser_name}-profile-",
+            dir=os.path.abspath(config.SELENIUM_CACHE_DIR),
+        )
     use_headless = config.HEADLESS if headless is None else bool(headless)
     options = make_browser_options(browser_name, profile_dir, headless=use_headless)
     browser = make_webdriver(browser_name, options)
-    browser._codex_profile_dir = profile_dir
+    if profile_dir:
+        browser._codex_profile_dir = profile_dir
     browser._wanyou_browser_name = browser_name
     if config.PAGE_LOAD_TIMEOUT:
         browser.set_page_load_timeout(config.PAGE_LOAD_TIMEOUT)

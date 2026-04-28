@@ -1,15 +1,19 @@
 import os
 
 from selenium import webdriver
+from selenium.common.exceptions import SessionNotCreatedException
 from selenium.webdriver.chrome.options import Options as ChromeOptions
 from selenium.webdriver.chrome.service import Service as ChromeService
 from selenium.webdriver.edge.options import Options as EdgeOptions
 from selenium.webdriver.edge.service import Service as EdgeService
+from selenium.webdriver.safari.options import Options as SafariOptions
+from selenium.webdriver.safari.service import Service as SafariService
 
 import config
 
 
-SUPPORTED_BROWSERS = {"chrome", "edge"}
+SUPPORTED_BROWSERS = {"chrome", "edge", "safari"}
+CHROMIUM_BROWSERS = {"chrome", "edge"}
 
 
 def get_selenium_browser_name() -> str:
@@ -18,12 +22,21 @@ def get_selenium_browser_name() -> str:
     if name not in SUPPORTED_BROWSERS:
         raise ValueError(
             "Unsupported Selenium browser "
-            f"{name!r}. Set WANYOU_SELENIUM_BROWSER to 'chrome' or 'edge'."
+            f"{name!r}. Set WANYOU_SELENIUM_BROWSER to 'chrome', 'edge', or 'safari'."
         )
     return name
 
 
+def browser_supports_profile_dir(browser_name: str) -> bool:
+    return browser_name in CHROMIUM_BROWSERS
+
+
 def make_browser_options(browser_name: str, profile_dir: str, *, headless: bool = False, detach: bool = False):
+    if browser_name == "safari":
+        options = SafariOptions()
+        options.page_load_strategy = getattr(config, "PAGE_LOAD_STRATEGY", "eager")
+        return options
+
     options = ChromeOptions() if browser_name == "chrome" else EdgeOptions()
     options.page_load_strategy = getattr(config, "PAGE_LOAD_STRATEGY", "eager")
     if headless:
@@ -59,5 +72,18 @@ def make_webdriver(browser_name: str, options):
     if browser_name == "chrome":
         service = ChromeService(log_output=os.devnull)
         return webdriver.Chrome(options=options, service=service)
+    if browser_name == "safari":
+        service = SafariService()
+        try:
+            return webdriver.Safari(options=options, service=service)
+        except SessionNotCreatedException as exc:
+            message = str(exc)
+            if "Allow remote automation" in message or "remote automation" in message.lower():
+                raise RuntimeError(
+                    "Safari WebDriver 未启用远程自动化。请先运行 `safaridriver --enable`，"
+                    "并在 Safari 设置的开发者/Developer 选项中勾选 Allow Remote Automation，"
+                    "然后重新运行。"
+                ) from exc
+            raise
     service = EdgeService(log_output=os.devnull)
     return webdriver.Edge(options=options, service=service)
