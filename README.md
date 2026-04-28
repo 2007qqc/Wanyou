@@ -54,15 +54,73 @@ source .venv/bin/activate
 export WANYOU_SELENIUM_BROWSER=chrome
 ```
 
-浏览器可通过 `WANYOU_SELENIUM_BROWSER` 切换：
+macOS 默认使用 `chrome`，Windows 默认使用 `edge`。如需切换浏览器，设置 `WANYOU_SELENIUM_BROWSER` 为 `chrome`、`edge` 或 `safari`。
+
+### 环境变量
+
+| 变量 | 用途 |
+| --- | --- |
+| `DEEPSEEK_API_KEY` | DeepSeek / LLM API key |
+| `WECHAT_PUBLIC_API_KEY` | 公众号文章抓取 API key，来自 `down.mptext.top` |
+| `WECHAT_MP_APPID` | 微信公众号官方后台 AppID，用于预留的公众号草稿箱接口 |
+| `WECHAT_MP_APPSECRET` | 微信公众号官方后台 AppSecret，用于预留的公众号草稿箱接口 |
+| `WANYOU_SELENIUM_BROWSER` | Selenium 浏览器，可选 `chrome`、`edge`、`safari` |
+
+macOS / Linux 当前终端临时设置：
 
 ```bash
-export WANYOU_SELENIUM_BROWSER=chrome
-export WANYOU_SELENIUM_BROWSER=edge
-export WANYOU_SELENIUM_BROWSER=safari
+export DEEPSEEK_API_KEY="your-deepseek-api-key"
+export WECHAT_PUBLIC_API_KEY="your-public-api-key"
+export WECHAT_MP_APPID="your-official-account-appid"
+export WECHAT_MP_APPSECRET="your-official-account-appsecret"
+export WANYOU_SELENIUM_BROWSER="chrome"
 ```
 
-macOS 默认使用 `chrome`，Windows 默认使用 `edge`。
+macOS 写入当前用户的 zsh 配置：
+
+```bash
+cat >> ~/.zshrc <<'EOF'
+export DEEPSEEK_API_KEY="your-deepseek-api-key"
+export WECHAT_PUBLIC_API_KEY="your-public-api-key"
+export WECHAT_MP_APPID="your-official-account-appid"
+export WECHAT_MP_APPSECRET="your-official-account-appsecret"
+export WANYOU_SELENIUM_BROWSER="chrome"
+EOF
+
+source ~/.zshrc
+```
+
+验证 macOS 环境变量是否已生效：
+
+```bash
+echo "$DEEPSEEK_API_KEY"
+echo "$WECHAT_PUBLIC_API_KEY"
+echo "$WECHAT_MP_APPID"
+echo "$WECHAT_MP_APPSECRET"
+echo "$WANYOU_SELENIUM_BROWSER"
+```
+
+Windows PowerShell 临时设置：
+
+```powershell
+$env:DEEPSEEK_API_KEY = "your-deepseek-api-key"
+$env:WECHAT_PUBLIC_API_KEY = "your-public-api-key"
+$env:WECHAT_MP_APPID = "your-official-account-appid"
+$env:WECHAT_MP_APPSECRET = "your-official-account-appsecret"
+$env:WANYOU_SELENIUM_BROWSER = "edge"
+```
+
+Windows 用户级持久设置：
+
+```powershell
+[Environment]::SetEnvironmentVariable("DEEPSEEK_API_KEY", "your-deepseek-api-key", "User")
+[Environment]::SetEnvironmentVariable("WECHAT_PUBLIC_API_KEY", "your-public-api-key", "User")
+[Environment]::SetEnvironmentVariable("WECHAT_MP_APPID", "your-official-account-appid", "User")
+[Environment]::SetEnvironmentVariable("WECHAT_MP_APPSECRET", "your-official-account-appsecret", "User")
+[Environment]::SetEnvironmentVariable("WANYOU_SELENIUM_BROWSER", "edge", "User")
+```
+
+写入用户级变量后需要重新打开终端或 IDE。
 
 ### Safari
 
@@ -178,41 +236,6 @@ powershell -ExecutionPolicy Bypass -File scripts\run_wanyou_to_wechat_draft.ps1 
 
 正式保存需要公众号官方后台的 AppID 和 AppSecret，并且公众号后台需要配置当前机器出口 IP 白名单。它们和用于抓取公众号文章的 `WECHAT_PUBLIC_API_KEY` 不是同一个 key。
 
-```bash
-export WECHAT_MP_APPID="your-appid"
-export WECHAT_MP_APPSECRET="your-appsecret"
-```
-
-## 环境变量
-
-LLM 默认使用 DeepSeek 兼容接口：
-
-```bash
-export DEEPSEEK_API_KEY="your-deepseek-api-key"
-```
-
-公众号抓取使用 `down.mptext.top` API：
-
-```bash
-export WECHAT_PUBLIC_API_KEY="your-key"
-```
-
-Windows PowerShell 临时设置：
-
-```powershell
-$env:DEEPSEEK_API_KEY = "your-deepseek-api-key"
-$env:WECHAT_PUBLIC_API_KEY = "your-key"
-```
-
-Windows 用户级持久设置：
-
-```powershell
-[Environment]::SetEnvironmentVariable("DEEPSEEK_API_KEY", "your-deepseek-api-key", "User")
-[Environment]::SetEnvironmentVariable("WECHAT_PUBLIC_API_KEY", "your-key", "User")
-```
-
-写入用户级变量后需要重新打开终端或 IDE。
-
 ## 单模块调试
 
 单模块输出位于 `output/module_<modules>_<timestamp>/`。
@@ -257,3 +280,34 @@ python skills/wanyou-richtext-export/scripts/run_wanyou_richtext_export.py outpu
 - 配置入口：[config.py](./config.py)
 - 物理系本科生偏好模板：[tendency.md](./tendency.md)
 - Agent pipeline 说明：[AGENTS.md](./AGENTS.md)
+
+## 高级调试
+
+复现某一天的筛选结果：
+
+```bash
+export WANYOU_RUN_DATE="2026-04-20"
+python skills/wanyou-full-run/scripts/run_wanyou_full_run.py --with-login --ranked-raw
+```
+
+`WANYOU_RUN_DATE` 只影响日期解析和时效筛选，输出目录仍按真实运行时间命名。
+
+常用 debug 文件：
+
+- `output/<timestamp>/debug/filter_decisions.jsonl`：逐条筛选记录。
+- `output/<timestamp>/debug/filter_decisions_summary.json`：筛选汇总。
+- `output/<timestamp>/debug/*.html` / `*.txt`：登录、页面结构和选择器快照。
+
+DeepSeek 兼容网关或自定义模型可通过环境变量覆盖：
+
+```bash
+export DEEPSEEK_API_KEY="your-deepseek-api-key"
+export LLM_BASE_URL="https://your-compatible-endpoint/v1"
+export LLM_API_KEY_ENV="DEEPSEEK_API_KEY"
+```
+
+公众号抓取常见错误：
+
+- `ret=-1`：API 认证失败，检查 `WECHAT_PUBLIC_API_KEY`。
+- `ret=401` / `ret=403`：API 无权限或 key 权限不足。
+- `ret=200003` / `invalid session`：API 会话无效或过期，需要更新 key/session。
