@@ -22,6 +22,9 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from generators.wechat_inline import markdown_to_wechat_inline_html
+from wanyou.env_loader import load_project_env
+
+load_project_env()
 
 TOKEN_URL = "https://api.weixin.qq.com/cgi-bin/token"
 UPLOAD_IMG_URL = "https://api.weixin.qq.com/cgi-bin/media/uploadimg"

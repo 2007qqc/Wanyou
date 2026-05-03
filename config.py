@@ -5,7 +5,10 @@
 import os
 import platform
 
+from wanyou.env_loader import load_project_env
 from wanyou.prompt_preferences import KEEP_DROP_PREFERENCE_RULES
+
+load_project_env()
 
 # 登录凭据改为运行时输入，不在配置中保存。
 

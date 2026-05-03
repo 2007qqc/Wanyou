@@ -4,4 +4,6 @@ output
 .DS_Store
 llm_decisions.jsonl
 .venv/
-env_varibles
+.env
+.env.*
+!.env.example
