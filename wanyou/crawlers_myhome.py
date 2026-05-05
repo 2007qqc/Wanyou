@@ -97,6 +97,18 @@ def _extract_detail_container(browser):
     return _wait_and_find(browser, selectors)
 
 
+def _markdown_images_for_new_files(images_dir, start_index, end_index):
+    lines = []
+    for index in range(start_index + 1, end_index + 1):
+        for ext in (".jpg", ".jpeg", ".png", ".gif", ".webp"):
+            image_path = os.path.join(images_dir, f"myhome_{index:04d}{ext}")
+            if os.path.exists(image_path):
+                rel_path = os.path.relpath(image_path, start=os.getcwd()).replace("\\", "/")
+                lines.append(f"![家园网图片{index}]({rel_path})")
+                break
+    return "\n\n".join(lines)
+
+
 def crawl_myhome(doc, base_images_dir, username="", password="", browser=None):
     debug_dir = os.path.join(os.path.dirname(base_images_dir), "debug")
     owns_browser = browser is None
@@ -145,8 +157,11 @@ def crawl_myhome(doc, base_images_dir, username="", password="", browser=None):
                     browser.close(); browser.switch_to.window(web); continue
                 if getattr(config, "RAW_COLLECTION_MODE", False) or resolve_copy_decision("myhome", title, date):
                     container = _extract_detail_container(browser)
+                    image_start = image_counter[0]
                     content_md = html_to_markdown(container, browser.current_url, session, inline_images_dir, image_counter, "myhome", browser.current_url)
                     content_md = convert_markdown_images_to_text(content_md)
+                    if not content_md.strip() and image_counter[0] > image_start:
+                        content_md = _markdown_images_for_new_files(inline_images_dir, image_start, image_counter[0])
                     titles.append(title)
                     full_texts.append(content_md)
                     log_filter_decision(section="myhome", title=title, status="kept", reason="crawler_selected", stage="crawler_myhome_detail", date=date, url=browser.current_url)

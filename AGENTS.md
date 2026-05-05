@@ -24,6 +24,11 @@ This repository is organized as an agent pipeline. Each stage can be debugged al
 - Skill: `skills/wanyou-full-run`
 - Responsibility: orchestrate the whole pipeline once and return final paths.
 
+`Code Cleanup`
+- Code: cross-cutting; commonly `scripts/`, `wanyou/`, `generators/`, and skill docs after debugging.
+- Skill: `skills/wanyou-code-cleanup`
+- Responsibility: remove stale debug scaffolding, duplicate logic, noisy stdout, and unnecessary LLM/browser automation complexity while preserving verified behavior.
+
 ## One-Run Commands
 
 Public-only smoke run:
@@ -44,6 +49,7 @@ python skills/wanyou-full-run/scripts/run_wanyou_full_run.py --with-login
 2. Inspect raw Markdown before touching summaries.
 3. Run LLM filter and summaries after confirming the raw crawl.
 4. Export rich text last.
+5. Use code cleanup after a fix has been verified, not before the expected behavior is understood.
 
 ## Known Timeout Causes
 

@@ -47,6 +47,10 @@ LINK_STYLE = "color:#2f6f9f;text-decoration:underline;word-break:break-all;"
 BULLET_STYLE = "margin:6px 0 6px 1em;color:#443929;font-size:15px;line-height:1.7;"
 IMAGE_STYLE = "display:block;width:100%;max-width:100%;height:auto;margin:10px auto;border-radius:8px;"
 FOOTER_STYLE = "margin:24px 0 0;padding:14px 10px;text-align:center;color:#8a7c58;font-size:14px;"
+TABLE_WRAP_STYLE = "margin:10px 0;overflow-x:auto;border:1px solid #ecdcae;border-radius:8px;background:#fffdf6;"
+TABLE_STYLE = "width:100%;border-collapse:collapse;font-size:14px;line-height:1.6;"
+TH_STYLE = "padding:7px 8px;border:1px solid #ecdcae;background:#fff0bf;color:#6f5716;font-weight:700;text-align:left;vertical-align:top;"
+TD_STYLE = "padding:7px 8px;border:1px solid #ecdcae;color:#443929;text-align:left;vertical-align:top;"
 
 
 def _split_label_value(text: str) -> Tuple[str, str]:
@@ -67,13 +71,40 @@ def _strip_emphasis(text: str) -> str:
 
 def _resolve_image_src(src: str, markdown_path: str) -> str:
     cleaned = src.strip().strip("<>").strip('"').strip("'")
-    if not cleaned or re.match(r"^(https?:)?//", cleaned):
+    if not cleaned or re.match(r"^(https?:)?//", cleaned) or re.match(r"^[a-zA-Z][a-zA-Z0-9+.-]*:", cleaned):
         return cleaned
     normalized = cleaned.replace("\\", os.sep).replace("/", os.sep)
+    markdown_dir = os.path.dirname(markdown_path)
+    candidates = []
     if os.path.isabs(normalized):
-        resolved = normalized
+        candidates.append(normalized)
     else:
-        resolved = os.path.normpath(os.path.join(os.path.dirname(markdown_path), normalized))
+        candidates.append(os.path.normpath(os.path.join(markdown_dir, normalized)))
+        basename = os.path.basename(normalized)
+        fixed_basename = re.sub(r"^([A-Za-z]+)(\d{4})(\.[^.]+)$", r"\1_\2\3", basename)
+        if "images" + os.sep + "inline" in normalized:
+            candidates.append(os.path.normpath(os.path.join(markdown_dir, "images", "inline", fixed_basename)))
+            candidates.append(os.path.normpath(os.path.join(markdown_dir, "images", "inline", basename)))
+        fixed_normalized = re.sub(
+            rf"images{re.escape(os.sep)}wanyou(?=\d)",
+            f"images{os.sep}_wanyou_",
+            normalized,
+        )
+        if fixed_normalized != normalized:
+            candidates.append(os.path.normpath(os.path.join(markdown_dir, fixed_normalized)))
+        fixed_normalized = re.sub(
+            rf"images{re.escape(os.sep)}wanyou_(\d{{8}}_\d{{4}})",
+            rf"images{os.sep}_wanyou_\1",
+            normalized,
+        )
+        if fixed_normalized != normalized:
+            candidates.append(os.path.normpath(os.path.join(markdown_dir, fixed_normalized)))
+        match = re.search(r"output" + re.escape(os.sep) + r"\d{12}" + re.escape(os.sep) + r"images" + re.escape(os.sep) + r"inline" + re.escape(os.sep) + r"([^" + re.escape(os.sep) + r"]+)$", normalized)
+        if match:
+            stale_basename = match.group(1)
+            fixed_stale_basename = re.sub(r"^([A-Za-z]+)(\d{4})(\.[^.]+)$", r"\1_\2\3", stale_basename)
+            candidates.append(os.path.normpath(os.path.join(markdown_dir, "images", "inline", fixed_stale_basename)))
+    resolved = next((path for path in candidates if os.path.exists(path)), candidates[0])
     return resolved.replace("\\", "/")
 
 
@@ -90,6 +121,38 @@ def _render_meta(label: str, value: str) -> str:
         value_style = TIME_VALUE_STYLE if label in TIME_LABELS else "color:#4f432f;"
         rendered_value = f"<span style=\"{value_style}\">{_render_text(value)}</span>"
     return f"<p style=\"{META_ROW_STYLE}\"><span style=\"{META_LABEL_STYLE}\">{escaped_label}</span>{rendered_value}</p>"
+
+
+def _is_table_row(text: str) -> bool:
+    stripped = text.strip()
+    return stripped.startswith("|") and stripped.endswith("|") and stripped.count("|") >= 2
+
+
+def _is_table_separator(text: str) -> bool:
+    return bool(re.match(r"^\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)+\|?\s*$", text.strip()))
+
+
+def _split_table_row(text: str) -> List[str]:
+    stripped = text.strip().strip("|")
+    return [cell.replace(r"\|", "|").strip() for cell in re.split(r"(?<!\\)\|", stripped)]
+
+
+def _render_markdown_table(table_lines: List[str]) -> str:
+    rows = [line for line in table_lines if _is_table_row(line) and not _is_table_separator(line)]
+    if not rows:
+        return ""
+    parsed = [_split_table_row(line) for line in rows]
+    max_cols = max(len(row) for row in parsed)
+    for row in parsed:
+        row.extend([""] * (max_cols - len(row)))
+    header = parsed[0]
+    body = parsed[1:]
+    head = "".join(f"<th style=\"{TH_STYLE}\">{html.escape(cell)}</th>" for cell in header)
+    rows_html = "".join(
+        "<tr>" + "".join(f"<td style=\"{TD_STYLE}\">{html.escape(cell)}</td>" for cell in row) + "</tr>"
+        for row in body
+    )
+    return f"<section style=\"{TABLE_WRAP_STYLE}\"><table style=\"{TABLE_STYLE}\"><thead><tr>{head}</tr></thead><tbody>{rows_html}</tbody></table></section>"
 
 
 def markdown_to_wechat_inline_html(markdown_text: str, markdown_path: str = "") -> str:
@@ -133,8 +196,42 @@ def markdown_to_wechat_inline_html(markdown_text: str, markdown_path: str = "") 
     blocks.append(f"<p style=\"{SUBTITLE_STYLE}\">清华大学物理系校园信息整理</p>")
     blocks.append("</section>")
 
-    for raw_line in (markdown_text or "").splitlines():
+    lines = (markdown_text or "").splitlines()
+    index = 0
+    while index < len(lines):
+        raw_line = lines[index]
         stripped = raw_line.strip()
+        if _is_table_row(stripped) and index + 1 < len(lines) and _is_table_separator(lines[index + 1].strip()):
+            table_lines = [stripped, lines[index + 1].strip()]
+            index += 2
+            while index < len(lines) and _is_table_row(lines[index].strip()):
+                table_lines.append(lines[index].strip())
+                index += 1
+            rendered_table = _render_markdown_table(table_lines)
+            if rendered_table:
+                blocks.append(rendered_table)
+            continue
+        if _is_table_row(stripped):
+            lookahead = index + 1
+            while lookahead < len(lines) and not lines[lookahead].strip():
+                lookahead += 1
+            if lookahead < len(lines) and _is_table_separator(lines[lookahead].strip()):
+                table_lines = [stripped, lines[lookahead].strip()]
+                index = lookahead + 1
+                while index < len(lines):
+                    candidate = lines[index].strip()
+                    if not candidate:
+                        index += 1
+                        continue
+                    if not _is_table_row(candidate):
+                        break
+                    table_lines.append(candidate)
+                    index += 1
+                rendered_table = _render_markdown_table(table_lines)
+                if rendered_table:
+                    blocks.append(rendered_table)
+                continue
+        index += 1
         if not stripped:
             continue
         if stripped in {HEADER_TITLE_LINE, HEADER_SUBTITLE_LINE, FOOTER_LINE}:

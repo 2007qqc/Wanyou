@@ -147,16 +147,41 @@ def _resolve_image_src(src: str, markdown_path: str, output_path: str) -> str:
     cleaned = src.strip().strip("<>").strip('"').strip("'")
     if not cleaned:
         return cleaned
-    if re.match(r"^(https?:)?//", cleaned):
+    if re.match(r"^(https?:)?//", cleaned) or re.match(r"^[a-zA-Z][a-zA-Z0-9+.-]*:", cleaned):
         return cleaned
 
     normalized = cleaned.replace("\\", os.sep).replace("/", os.sep)
+    markdown_dir = os.path.dirname(markdown_path)
     candidates = []
     if os.path.isabs(normalized):
         candidates.append(normalized)
     else:
+        candidates.append(os.path.normpath(os.path.join(markdown_dir, normalized)))
         candidates.append(os.path.normpath(os.path.join(os.getcwd(), normalized)))
-        candidates.append(os.path.normpath(os.path.join(os.path.dirname(markdown_path), normalized)))
+        basename = os.path.basename(normalized)
+        fixed_basename = re.sub(r"^([A-Za-z]+)(\d{4})(\.[^.]+)$", r"\1_\2\3", basename)
+        if "images" + os.sep + "inline" in normalized:
+            candidates.append(os.path.normpath(os.path.join(markdown_dir, "images", "inline", fixed_basename)))
+            candidates.append(os.path.normpath(os.path.join(markdown_dir, "images", "inline", basename)))
+        fixed_normalized = re.sub(
+            rf"images{re.escape(os.sep)}wanyou(?=\d)",
+            f"images{os.sep}_wanyou_",
+            normalized,
+        )
+        if fixed_normalized != normalized:
+            candidates.append(os.path.normpath(os.path.join(markdown_dir, fixed_normalized)))
+        fixed_normalized = re.sub(
+            rf"images{re.escape(os.sep)}wanyou_(\d{{8}}_\d{{4}})",
+            rf"images{os.sep}_wanyou_\1",
+            normalized,
+        )
+        if fixed_normalized != normalized:
+            candidates.append(os.path.normpath(os.path.join(markdown_dir, fixed_normalized)))
+        match = re.search(r"output" + re.escape(os.sep) + r"\d{12}" + re.escape(os.sep) + r"images" + re.escape(os.sep) + r"inline" + re.escape(os.sep) + r"([^" + re.escape(os.sep) + r"]+)$", normalized)
+        if match:
+            stale_basename = match.group(1)
+            fixed_stale_basename = re.sub(r"^([A-Za-z]+)(\d{4})(\.[^.]+)$", r"\1_\2\3", stale_basename)
+            candidates.append(os.path.normpath(os.path.join(markdown_dir, "images", "inline", fixed_stale_basename)))
 
     resolved = next((path for path in candidates if os.path.exists(path)), candidates[0])
     relative = os.path.relpath(resolved, start=os.path.dirname(output_path))
@@ -191,6 +216,44 @@ def _strip_markdown_emphasis(text: str) -> str:
     if stripped.startswith("*") and stripped.endswith("*") and len(stripped) > 2:
         return stripped[1:-1].strip()
     return stripped
+
+
+def _is_table_row(text: str) -> bool:
+    stripped = text.strip()
+    return stripped.startswith("|") and stripped.endswith("|") and stripped.count("|") >= 2
+
+
+def _is_table_separator(text: str) -> bool:
+    return bool(re.match(r"^\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)+\|?\s*$", text.strip()))
+
+
+def _split_table_row(text: str) -> List[str]:
+    stripped = text.strip().strip("|")
+    cells = re.split(r"(?<!\\)\|", stripped)
+    return [cell.replace(r"\|", "|").strip() for cell in cells]
+
+
+def _render_markdown_table(table_lines: List[str]) -> str:
+    rows = [line for line in table_lines if _is_table_row(line) and not _is_table_separator(line)]
+    if not rows:
+        return ""
+    parsed = [_split_table_row(line) for line in rows]
+    max_cols = max(len(row) for row in parsed)
+    for row in parsed:
+        row.extend([""] * (max_cols - len(row)))
+    header = parsed[0]
+    body = parsed[1:]
+    head_html = "".join(f"<th>{html.escape(cell)}</th>" for cell in header)
+    body_html = "\n".join(
+        "<tr>" + "".join(f"<td>{html.escape(cell)}</td>" for cell in row) + "</tr>"
+        for row in body
+    )
+    return (
+        "<div class='table-wrap'><table class='info-table'>"
+        f"<thead><tr>{head_html}</tr></thead>"
+        f"<tbody>{body_html}</tbody>"
+        "</table></div>"
+    )
 
 
 def _is_time_like_label(label: str) -> bool:
@@ -248,8 +311,42 @@ def markdown_to_h5_html(markdown_text: str, markdown_path: str, output_path: str
             blocks.append("</section>")
             section_open = False
 
-    for raw_line in markdown_text.splitlines():
+    lines = markdown_text.splitlines()
+    index = 0
+    while index < len(lines):
+        raw_line = lines[index]
         stripped = _maybe_fix_mojibake(raw_line)
+        if _is_table_row(stripped) and index + 1 < len(lines) and _is_table_separator(_maybe_fix_mojibake(lines[index + 1])):
+            table_lines = [stripped, _maybe_fix_mojibake(lines[index + 1])]
+            index += 2
+            while index < len(lines) and _is_table_row(_maybe_fix_mojibake(lines[index])):
+                table_lines.append(_maybe_fix_mojibake(lines[index]))
+                index += 1
+            rendered_table = _render_markdown_table(table_lines)
+            if rendered_table:
+                blocks.append(rendered_table)
+            continue
+        if _is_table_row(stripped):
+            lookahead = index + 1
+            while lookahead < len(lines) and not _maybe_fix_mojibake(lines[lookahead]).strip():
+                lookahead += 1
+            if lookahead < len(lines) and _is_table_separator(_maybe_fix_mojibake(lines[lookahead])):
+                table_lines = [stripped, _maybe_fix_mojibake(lines[lookahead])]
+                index = lookahead + 1
+                while index < len(lines):
+                    candidate = _maybe_fix_mojibake(lines[index])
+                    if not candidate.strip():
+                        index += 1
+                        continue
+                    if not _is_table_row(candidate):
+                        break
+                    table_lines.append(candidate)
+                    index += 1
+                rendered_table = _render_markdown_table(table_lines)
+                if rendered_table:
+                    blocks.append(rendered_table)
+                continue
+        index += 1
         if _should_skip_line(stripped):
             continue
 
@@ -424,6 +521,12 @@ def markdown_to_h5_html(markdown_text: str, markdown_path: str, output_path: str
     .note {{ color: var(--ink); font-size: 14px; }}
     .bullet {{ position: relative; padding-left: 1.1em; }}
     .bullet::before {{ content: "•"; position: absolute; left: 0; color: var(--accent-ink); }}
+    .table-wrap {{ margin: 12px 0; overflow-x: auto; border: 1px solid rgba(213, 165, 28, 0.45); border-radius: 8px; background: #fffdf6; }}
+    .info-table {{ width: 100%; border-collapse: collapse; min-width: 420px; font-size: 14px; line-height: 1.65; }}
+    .info-table th, .info-table td {{ padding: 8px 10px; border-bottom: 1px solid rgba(213, 165, 28, 0.26); border-right: 1px solid rgba(213, 165, 28, 0.18); text-align: left; vertical-align: top; }}
+    .info-table th {{ background: rgba(245, 200, 51, 0.18); color: var(--accent-ink); font-weight: 700; }}
+    .info-table tr:last-child td {{ border-bottom: 0; }}
+    .info-table th:last-child, .info-table td:last-child {{ border-right: 0; }}
     a {{ color: #8b5600; text-decoration: none; border-bottom: 1px solid rgba(139, 86, 0, 0.24); }}
     .figure {{ margin: 12px 0 4px; text-align: center; }}
     .figure img {{ display: inline-block; max-width: 100%; border-radius: 10px; border: 1px solid rgba(62, 62, 62, 0.08); }}

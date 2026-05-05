@@ -63,9 +63,35 @@ macOS 默认使用 `chrome`，Windows 默认使用 `edge`。如需切换浏览�
 | --- | --- |
 | `DEEPSEEK_API_KEY` | DeepSeek / LLM API key |
 | `WECHAT_PUBLIC_API_KEY` | 公众号文章抓取 API key，来自 `down.mptext.top` |
+| `MYHOME_IMAGE_OCR_SPACE_URL` | 家园网本地图片 OCR 接口，默认 `https://api.ocr.space/parse/image` |
+| `WECHAT_OCR_SPACE_URL` | 公众号公开图片 URL OCR 接口，默认 `https://api.ocr.space/parse/imageurl` |
 | `WECHAT_MP_APPID` | 微信公众号官方后台 AppID，用于预留的公众号草稿箱接口 |
 | `WECHAT_MP_APPSECRET` | 微信公众号官方后台 AppSecret，用于预留的公众号草稿箱接口 |
 | `WANYOU_SELENIUM_BROWSER` | Selenium 浏览器，可选 `chrome`、`edge`、`safari` |
+
+关于读取正文图片信息的变量有：
+
+| 变量 | 用途 |
+| --- | --- |
+| `RAW_COLLECTION_KEEP_IMAGES` | raw/ranked raw 阶段保留并下载正文图片，默认开启 |
+| `MYHOME_IMAGE_OCR_KEEP_IMAGE` | 家园网图片 OCR 后保留原图，默认开启 |
+| `IMAGE_LLM_PROVIDER` | 识图大模型 provider，可选 `openai`、`gemini` 等 |
+| `IMAGE_LLM_BASE_URL` | 识图大模型 OpenAI/Gemini 兼容接口地址 |
+| `IMAGE_LLM_MODEL` | 识图大模型名称 |
+| `IMAGE_LLM_API_KEY_ENV` | 识图大模型读取哪个 API key 变量 |
+| `OCR_VISION_LLM_ENABLED` | 是否启用识图大模型 OCR |
+| `OCR_VISION_LLM_MODE` | 识图 OCR 模式：`fallback`、`prefer` 或 `only` |
+| `OCR_VISION_LLM_PROVIDER` | OCR 识图模型 provider，例如 `zhipuai` |
+| `OCR_VISION_LLM_MODEL` | OCR 识图模型名称，例如 `glm-4v-flash` |
+| `OCR_VISION_LLM_API_KEY_ENV` | OCR 识图模型读取哪个 API key 变量 |
+| `XIUMI_HOME_URL` | 秀米“我的秀米/工作台”入口，登录确认后从这里新建图文 |
+| `XIUMI_IMAGE_MODE` | 秀米正文图片处理：`upload`、`auto`、`inline` 或 `omit` |
+| `XIUMI_MAX_INLINE_IMAGE_HTML_CHARS` | `auto` 模式下允许内联图片后的最大正文体积 |
+| `XIUMI_IMAGE_UPLOAD_WAIT_SECONDS` | `upload` 模式下等待单张图片上传完成的秒数 |
+| `XIUMI_FIRST_IMAGE_UPLOAD_WAIT_SECONDS` | 第一张图片上传探测等待秒数，便于图库首次加载 |
+| `XIUMI_IMAGE_UPLOAD_MAX_FAILURES` | 开头连续几张图片拿不到秀米素材 URL 后判定上传链路异常并降级 |
+| `XIUMI_IMAGE_UPLOAD_RETRIES` | 单张图片上传失败后的轻量重试次数 |
+| `XIUMI_IMAGE_UPLOAD_BATCH_SIZE` | 秀米图库批量上传每组图片数量；设为 `1` 可回到逐张上传 |
 
 创建本地 `.env`：
 
@@ -82,6 +108,13 @@ DEEPSEEK_API_KEY="your-deepseek-api-key"
 # 公众号文章抓取 API key，来自 down.mptext.top
 WECHAT_PUBLIC_API_KEY="your-public-api-key"
 
+# OCR.Space API key：家园网图片通知、公众号图片文字识别会读取它
+OCR_SPACE_API_KEY="your-ocr-api-key"
+
+# OCR 接口：本地下载图片用 /parse/image，公网图片 URL 用 /parse/imageurl
+MYHOME_IMAGE_OCR_SPACE_URL="https://api.ocr.space/parse/image"
+WECHAT_OCR_SPACE_URL="https://api.ocr.space/parse/imageurl"
+
 # 公众号官方后台 AppID，只有直接保存到公众号草稿箱时需要
 WECHAT_MP_APPID="your-official-account-appid"
 
@@ -90,6 +123,40 @@ WECHAT_MP_APPSECRET="your-official-account-appsecret"
 
 # Selenium 浏览器：macOS 推荐 chrome；Windows 默认 edge；Safari 需先开启远程自动化
 WANYOU_SELENIUM_BROWSER="chrome"
+
+# raw/ranked raw 阶段保留并下载正文图片；正文为图片的通知依赖这个开关
+RAW_COLLECTION_KEEP_IMAGES="1"
+
+# 家园网图片 OCR 后仍保留原图
+MYHOME_IMAGE_OCR_KEEP_IMAGE="1"
+
+# 识图大模型：当前用于公众号图片类型判断，也作为后续图片理解接口预留
+IMAGE_LLM_PROVIDER="openai"
+IMAGE_LLM_BASE_URL="https://api.openai.com/v1"
+IMAGE_LLM_MODEL="gpt-4o-mini"
+IMAGE_LLM_API_KEY_ENV="OPENAI_API_KEY"
+OPENAI_API_KEY="your-vision-model-api-key"
+WECHAT_IMAGE_LLM_ENABLED="1"
+
+# 识图大模型 OCR：可作为 OCR.Space 的兜底、优先引擎或唯一引擎
+# fallback = OCR.Space 失败后调用识图模型；prefer = 优先识图模型；only = 只用识图模型
+OCR_VISION_LLM_ENABLED="1"
+OCR_VISION_LLM_MODE="fallback"
+OCR_VISION_LLM_PROVIDER="zhipuai"
+OCR_VISION_LLM_BASE_URL="https://open.bigmodel.cn/api/paas/v4"
+OCR_VISION_LLM_MODEL="glm-4v-flash"
+OCR_VISION_LLM_API_KEY_ENV="ZHIPUAI_API_KEY"
+ZHIPUAI_API_KEY="your-glm-api-key"
+
+# 秀米图片处理：upload 会走“我的图库/上传图片”拿素材 URL；inline 会转 base64；omit 会省略正文图片
+XIUMI_HOME_URL="https://xiumi.us/studio/v5?lang=zh_CN#/"
+XIUMI_IMAGE_MODE="upload"
+XIUMI_MAX_INLINE_IMAGE_HTML_CHARS="900000"
+XIUMI_IMAGE_UPLOAD_WAIT_SECONDS="8"
+XIUMI_FIRST_IMAGE_UPLOAD_WAIT_SECONDS="20"
+XIUMI_IMAGE_UPLOAD_MAX_FAILURES="3"
+XIUMI_IMAGE_UPLOAD_RETRIES="1"
+XIUMI_IMAGE_UPLOAD_BATCH_SIZE="6"
 ```
 
 Windows PowerShell 可以用记事本编辑：
@@ -176,9 +243,11 @@ python scripts/publish_xiumi_draft.py output/xxx/wanyou_xxx.html --markdown outp
 
 秀米保存流程会：
 
-- 打开秀米图文编辑器 `paper/for/new`
-- 如果未登录，等待用户在浏览器中登录，登录成功后自动继续
-- 优先读取 Markdown，转换为内联富文本后写入正文
+- 先打开“我的秀米/工作台”并确认登录状态；如果未登录，等待用户登录，登录成功后自动继续
+- 从“我的秀米”页面点击新建图文，不在登录前直接打开 `paper/for/new`
+- 优先读取 Markdown，转换为适合秀米的富文本 HTML
+- 按“文字 -> 图片 -> 排版”的顺序写入：先写入正文文字和图片占位，避免登录或图库操作打断正文；再打开“我的图库/上传图片(无水印)”上传正文图片，拿到秀米素材 URL；最后把图片 URL 回填到 HTML 中并重新应用正文排版
+- `XIUMI_IMAGE_MODE=upload` 是默认推荐模式；本地图片会优先上传，`data:image/base64` 内联图会后置，避免单张内联图 COS 失败阻断全部图片
 - 默认尝试将项目根目录的 `badge.png` 设为草稿封面
 - 点击保存并输出 `xiumi_draft_url`
 - 保存后保留浏览器，用户可继续在秀米编辑；确认已保存后回到命令行按回车，程序关闭浏览器并结束

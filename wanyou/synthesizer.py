@@ -14,8 +14,8 @@ from wanyou.temporal_filter import assess_temporal_relevance
 
 MAX_ITEMS_PER_SECTION = 4
 WECHAT_MAX_ITEMS = 5
-SUMMARY_HARD_LIMIT = 70
-ITEM_TOTAL_UNIT_LIMIT = 250
+SUMMARY_HARD_LIMIT = max(0, int(getattr(config, "FINAL_SUMMARY_MAX_UNITS", 70) or 0))
+ITEM_TOTAL_UNIT_LIMIT = max(0, int(getattr(config, "FINAL_CONTENT_MAX_UNITS", 0) or 0))
 NOW = effective_run_datetime()
 PHYSICS_SECTION = "物理系学术报告"
 
@@ -58,6 +58,7 @@ def build_augmented_markdown(markdown_text: str, current_markdown_path: str = ""
     configure_filter_debug_from_markdown(current_markdown_path)
     rendered_sections = []
     previous_report_index = {}
+    trust_selected_raw = "_todo_selected_raw" in os.path.basename(current_markdown_path or "")
 
     for section in parse_markdown_document(markdown_text):
         section_name = section["title"]
@@ -74,7 +75,8 @@ def build_augmented_markdown(markdown_text: str, current_markdown_path: str = ""
             )
 
         items = _remove_previous_issue_items(section_name, items, previous_report_index)
-        items = _filter_temporal_items(section_name, items)
+        if not trust_selected_raw:
+            items = _filter_temporal_items(section_name, items)
         items = _filter_section_items(section_name, items)
         for item in items:
             log_filter_decision(
@@ -344,6 +346,8 @@ def _enrich_items(section_name: str, items: List[dict]) -> List[dict]:
 def _summarize_item(item: dict) -> str:
     title = item.get("title", "")
     content = item.get("content", "")
+    if SUMMARY_HARD_LIMIT <= 0:
+        return ""
     fallback = _clip_units(_clean_text(content), SUMMARY_HARD_LIMIT)
     if not getattr(config, "LLM_ENABLED", False):
         return fallback
@@ -367,8 +371,10 @@ def _compress_item_content(item: dict, summary: str) -> str:
     content = item.get("content", "") or ""
     if item.get("source") == PHYSICS_SECTION and re.search(r"(?:内容摘要|报告摘要)[：:]", content):
         return _clean_text(content)
-    budget = max(80, ITEM_TOTAL_UNIT_LIMIT - _estimate_units(summary) - 20)
     cleaned = _clean_text(content)
+    if ITEM_TOTAL_UNIT_LIMIT <= 0:
+        return cleaned
+    budget = max(80, ITEM_TOTAL_UNIT_LIMIT - _estimate_units(summary) - 20)
     if _estimate_units(summary) + _estimate_units(cleaned) <= ITEM_TOTAL_UNIT_LIMIT:
         return cleaned
 

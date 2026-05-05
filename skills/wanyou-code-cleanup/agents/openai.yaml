@@ -1,0 +1,4 @@
+interface:
+  display_name: "Wanyou Code Cleanup"
+  short_description: "Clean Wanyou code without changing behavior"
+  default_prompt: "Clean the touched Wanyou code, remove stale debug scaffolding, keep behavior stable, and verify the relevant path."

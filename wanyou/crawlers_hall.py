@@ -50,6 +50,10 @@ def crawl_hall(doc, filename_jpg, base_images_dir):
     result_refined = []
     titles = []
     previous_titles = load_previous_titles()
+    keep_images = (
+        not getattr(config, "RAW_COLLECTION_MODE", False)
+        or bool(getattr(config, "RAW_COLLECTION_KEEP_IMAGES", True))
+    )
     for i, item in enumerate(result[::-1]):
         if item["title"] in titles:
             for item_refined in result_refined:
@@ -64,7 +68,7 @@ def crawl_hall(doc, filename_jpg, base_images_dir):
             log_filter_decision(section="hall", title=item["title"], status="dropped", reason="previous_issue", stage="crawler_hall_refine", date=item.get("date", ""))
             continue
         path = ""
-        if not getattr(config, "RAW_COLLECTION_MODE", False):
+        if keep_images:
             response = requests.get(item["absolute_src"], headers={"user-agent": config.USER_AGENT})
             poster_dir = os.path.join(base_images_dir, filename_jpg)
             os.makedirs(poster_dir, exist_ok=True)

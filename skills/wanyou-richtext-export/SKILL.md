@@ -41,8 +41,12 @@ Send an existing final HTML/Markdown pair to a Xiumi draft:
 python scripts/publish_xiumi_draft.py output/final.html --markdown output/final.md --title "万有预报"
 ```
 
+For the canonical Xiumi browser workflow, read `references/xiumi-workflow.md` before changing `scripts/publish_xiumi_draft.py`.
+
 ## Debug Rules
 
 - Treat HTML as the primary richtext verification target.
 - If DOCX is needed, use the full pipeline and verify local `pandoc` first.
 - Richtext export should not change crawler or LLM filtering behavior.
+- Xiumi publishing should preserve the verified internal order: text first, images second, final layout last.
+- Xiumi stdout should show only user-facing progress and final status. Detailed upload, selector, and exception diagnostics belong in `output/xiumi_debug/*.jsonl`.

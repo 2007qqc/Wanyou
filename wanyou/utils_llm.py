@@ -322,7 +322,7 @@ def multimodal_complete(
         return None
 
     try:
-        if provider_name in {"openai", "chatgpt"}:
+        if provider_name in _OPENAI_COMPATIBLE_PROVIDERS:
             endpoint = f"{_resolve_base_url(provider_name, base_url)}/chat/completions"
             body = {
                 "model": model_name,

@@ -25,9 +25,13 @@ def _strip_images(text: str) -> str:
 
 
 def _clean_text(text: str, title: str = "", *, clean_with_llm: bool = False) -> str:
-    text = _strip_images(text)
+    image_markdown = re.findall(r"!\[[^\]]*\]\([^)]*\)", text or "")
     if clean_with_llm:
-        cleaned = clean_crawled_markdown(text, source=title or "raw", use_llm=True) or text
+        ranking_text = _strip_images(text)
+        cleaned = clean_crawled_markdown(ranking_text, source=title or "raw", use_llm=True) or ranking_text
+        missing_images = [image for image in image_markdown if image not in cleaned]
+        if missing_images:
+            cleaned = f"{cleaned.rstrip()}\n\n" + "\n\n".join(missing_images)
     else:
         cleaned = _rule_clean_markdown(text)
     cleaned = re.sub(r"\n{3,}", "\n\n", cleaned or "")

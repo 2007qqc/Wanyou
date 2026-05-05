@@ -8,6 +8,7 @@ import html2text
 import requests
 import config
 from wanyou.utils_llm import multimodal_complete
+from wanyou.utils_ocr import ocr_image_with_llm
 from wanyou.wechat_client import fetch_article_html, normalize_url
 
 
@@ -168,6 +169,28 @@ def call_ocr_space(image_url):
         return ""
 
 
+def _vision_ocr_mode():
+    mode = str(getattr(config, "OCR_VISION_LLM_MODE", "fallback") or "fallback").strip().lower()
+    if mode not in {"fallback", "prefer", "only"}:
+        return "fallback"
+    return mode
+
+
+def call_image_ocr(image_url):
+    mode = _vision_ocr_mode()
+    if mode in {"prefer", "only"}:
+        llm_text = ocr_image_with_llm(image_url)
+        if llm_text or mode == "only":
+            return llm_text
+
+    ocr_text = call_ocr_space(image_url)
+    if ocr_text:
+        return ocr_text
+    if mode == "fallback":
+        return ocr_image_with_llm(image_url)
+    return ""
+
+
 def fetch_image_ocr_texts(session, image_urls, timeout, sleep_seconds):
     _ = session, timeout
     max_images = getattr(config, "WECHAT_OCR_MAX_IMAGES_PER_ARTICLE", 0)
@@ -181,10 +204,10 @@ def fetch_image_ocr_texts(session, image_urls, timeout, sleep_seconds):
         try:
             image_type = classify_image_type_with_llm(image_url)
             types.append(image_type)
-            if image_type in ("TABLE", "QRCODE"):
+            if image_type == "QRCODE":
                 texts.append("")
             else:
-                texts.append(call_ocr_space(image_url))
+                texts.append(call_image_ocr(image_url))
         except Exception:
             texts.append("")
             types.append("OTHER")

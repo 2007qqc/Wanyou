@@ -148,7 +148,11 @@ def restore_tables(text, tables):
 def html_to_markdown(container, base_url, session, images_dir, image_counter, image_prefix, referer):
     container_html = container.get_attribute("outerHTML")
     container_html = normalize_resource_urls(container_html, base_url)
-    if getattr(config, "RAW_COLLECTION_MODE", False):
+    keep_images = (
+        not getattr(config, "RAW_COLLECTION_MODE", False)
+        or bool(getattr(config, "RAW_COLLECTION_KEEP_IMAGES", True))
+    )
+    if not keep_images:
         container_html = re.sub(r"<img\b[^>]*>", "", container_html, flags=re.I)
     else:
         container_html = download_images_and_rewrite(
@@ -156,7 +160,8 @@ def html_to_markdown(container, base_url, session, images_dir, image_counter, im
         )
 
     handler = html2text.HTML2Text()
-    handler.ignore_images = bool(getattr(config, "RAW_COLLECTION_MODE", False))
+    handler.ignore_images = not keep_images
+    handler.images_to_alt = False
     handler.body_width = 0
     handler.single_line_break = True
     handler.bypass_tables = True
@@ -176,8 +181,7 @@ def _strip_residual_markup(text):
     cleaned = re.sub(r"<[^>]+>", " ", cleaned)
     cleaned = html_lib.unescape(cleaned)
     cleaned = cleaned.replace("&nbsp;", " ")
-    cleaned = re.sub(r"!\[([^\]]*)\]\(([^)]*)\)", r"\1", cleaned)
-    cleaned = re.sub(r"\[([^\]]+)\]\(([^)]*)\)", r"\1", cleaned)
+    cleaned = re.sub(r"(?<!!)\[([^\]]+)\]\(([^)]*)\)", r"\1", cleaned)
     cleaned = re.sub(r"`{1,3}([^`]+)`{1,3}", r"\1", cleaned)
     cleaned = re.sub(r"(?m)^\s{0,3}>\s?", "", cleaned)
     cleaned = re.sub(r"(?m)^\s*[-*_]{3,}\s*$", "", cleaned)
@@ -207,7 +211,26 @@ def _clean_quality_score(text):
     chinese = len(re.findall(r"[\u4e00-\u9fff]", candidate))
     english_noise = len(re.findall(r"Source:|Markdown:|Content:|Status:|Unknown", candidate, flags=re.I))
     html_noise = len(re.findall(r"<[a-zA-Z/][^>]*>", candidate))
-    return chinese * 3 + len(candidate) - english_noise * 20 - html_noise * 10
+    table_bonus = len(re.findall(r"(?m)^\s*\|.+\|\s*$", candidate)) * 20
+    return chinese * 3 + len(candidate) + table_bonus - english_noise * 20 - html_noise * 10
+
+
+def _looks_like_markdown_table(text):
+    lines = [line.strip() for line in (text or "").splitlines()]
+    for index in range(len(lines) - 1):
+        row = lines[index]
+        sep = lines[index + 1]
+        if row.count("|") >= 2 and re.match(r"^\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)+\|?\s*$", sep):
+            return True
+    return False
+
+
+def _looks_like_tabular_text(text):
+    lines = [line.rstrip() for line in (text or "").splitlines()]
+    pipe_rows = sum(1 for line in lines if line.count("|") >= 2)
+    tab_rows = sum(1 for line in lines if line.count("\t") >= 2)
+    wide_space_rows = sum(1 for line in lines if len(re.split(r"\s{2,}", line.strip())) >= 3)
+    return _looks_like_markdown_table(text) or pipe_rows >= 2 or tab_rows >= 2 or wide_space_rows >= 3
 
 
 
@@ -244,10 +267,19 @@ def clean_crawled_markdown(text, source="", *, use_llm=False):
     if not use_llm or getattr(config, "RAW_SKIP_LLM_CLEAN", False):
         return cleaned
 
+    table_instruction = ""
+    if _looks_like_tabular_text(cleaned):
+        table_instruction = (
+            "\nThe text appears to contain table-like content. "
+            "If there are pipe-delimited, tab-delimited, or aligned-column rows, convert them into a valid Markdown table. "
+            "Keep every cell value, preserve row order, add one separator row, and do not summarize table contents."
+        )
     prompt = (
         "Clean the Markdown formatting without changing facts.\n"
         "Remove residual HTML tags, broken Markdown markers, stray emphasis, repeated blank lines, and raw markup noise.\n"
-        "Keep headings, lists, dates, names, links, and paragraph order.\n"
+        "Keep headings, lists, dates, names, links, images, tables, and paragraph order. "
+        "Do not rewrite, normalize, shorten, or remove URLs or Markdown image paths inside []() or ![]()."
+        f"{table_instruction}\n"
         "Return Markdown only."
     )
     user_prompt = f"Source: {source or 'crawler'}\n\nMarkdown:\n{cleaned[:3000]}"
@@ -305,12 +337,16 @@ def clean_markdown_document_with_llm(markdown_text, source_prefix="final"):
             title = item["title"]
             body = "\n".join(item.get("body_lines", [])).strip()
             if not body:
+                if title and title != "占位卡片":
+                    parts.append(f"## {title}")
+                    parts.append("")
                 continue
             preserve_original_summary = section.get("title") == "物理系学术报告"
+            use_final_llm_clean = bool(getattr(config, "FINAL_MARKDOWN_LLM_CLEAN_ENABLED", False))
             cleaned = clean_crawled_markdown(
                 body,
                 source=f"{source_prefix}:{title}",
-                use_llm=not preserve_original_summary,
+                use_llm=use_final_llm_clean and not preserve_original_summary,
             )
             cleaned = _normalize_body_headings(cleaned, title=title)
             cleaned = _rule_clean_markdown(cleaned)

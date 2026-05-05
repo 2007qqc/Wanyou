@@ -112,6 +112,7 @@ def assess_temporal_relevance(
     deadlines = _parsed_datetimes(signals, "deadline")
     events = _parsed_datetimes(signals, "event")
     publishes = _parsed_datetimes(signals, "publish")
+    mentions = _parsed_datetimes(signals, "mentioned")
 
     if deadlines:
         latest = max(deadlines)
@@ -138,6 +139,17 @@ def assess_temporal_relevance(
 
     if publishes:
         latest = max(publishes)
+        future_mentions = [value for value in mentions if value >= current - dt.timedelta(hours=12)]
+        if latest < issue_cutoff and future_mentions:
+            basis = max(future_mentions)
+            return {
+                "keep": True,
+                "reason": "publish_old_but_future_mentioned",
+                "basis": basis.isoformat(timespec="minutes"),
+                "signals": signals,
+                "cutoff": issue_cutoff.isoformat(timespec="minutes"),
+                "now": current.isoformat(timespec="minutes"),
+            }
         return {
             "keep": latest >= issue_cutoff,
             "reason": "publish_recent" if latest >= issue_cutoff else "publish_older_than_cutoff",
