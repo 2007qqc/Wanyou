@@ -14,8 +14,6 @@ from wanyou.temporal_filter import assess_temporal_relevance
 
 MAX_ITEMS_PER_SECTION = 4
 WECHAT_MAX_ITEMS = 5
-SUMMARY_HARD_LIMIT = max(0, int(getattr(config, "FINAL_SUMMARY_MAX_UNITS", 70) or 0))
-ITEM_TOTAL_UNIT_LIMIT = max(0, int(getattr(config, "FINAL_CONTENT_MAX_UNITS", 0) or 0))
 NOW = effective_run_datetime()
 PHYSICS_SECTION = "物理系学术报告"
 
@@ -338,7 +336,7 @@ def _enrich_items(section_name: str, items: List[dict]) -> List[dict]:
     for item in items:
         copied = dict(item)
         copied["summary"] = _summarize_item(copied)
-        copied["content"] = _compress_item_content(copied, copied["summary"])
+        copied["content"] = _clean_text(copied.get("content", ""))
         enriched.append(copied)
     return enriched
 
@@ -346,9 +344,7 @@ def _enrich_items(section_name: str, items: List[dict]) -> List[dict]:
 def _summarize_item(item: dict) -> str:
     title = item.get("title", "")
     content = item.get("content", "")
-    if SUMMARY_HARD_LIMIT <= 0:
-        return ""
-    fallback = _clip_units(_clean_text(content), SUMMARY_HARD_LIMIT)
+    fallback = _clean_text(content)
     if not getattr(config, "LLM_ENABLED", False):
         return fallback
 
@@ -356,48 +352,16 @@ def _summarize_item(item: dict) -> str:
         (
             "你在为清华大学物理系的每周信息简报写要点透视。"
             "请概括最重要的信息，优先保留活动/截止/报名/地点/对象。"
-            f"输出不超过 {SUMMARY_HARD_LIMIT} 字，只输出摘要正文。"
+            "输出控制在 100 字/词以内，只输出摘要正文。"
+            "宁可略短，也不要为了凑长度截断成半句话。"
         ),
         f"标题: {title}\n来源: {item.get('source', '')}\n正文:\n{content[:2500]}",
         model=getattr(config, "SYNTHESIS_LLM_MODEL", "") or None,
         max_tokens=180,
         temperature=0,
-        task_label=f"正在压缩单条信息篇幅：{title[:24]}",
+        task_label=f"正在生成要点透视：{title[:24]}",
     )
-    return _clip_units(_clean_text(result or fallback), SUMMARY_HARD_LIMIT)
-
-
-def _compress_item_content(item: dict, summary: str) -> str:
-    content = item.get("content", "") or ""
-    if item.get("source") == PHYSICS_SECTION and re.search(r"(?:内容摘要|报告摘要)[：:]", content):
-        return _clean_text(content)
-    cleaned = _clean_text(content)
-    if ITEM_TOTAL_UNIT_LIMIT <= 0:
-        return cleaned
-    budget = max(80, ITEM_TOTAL_UNIT_LIMIT - _estimate_units(summary) - 20)
-    if _estimate_units(summary) + _estimate_units(cleaned) <= ITEM_TOTAL_UNIT_LIMIT:
-        return cleaned
-
-    if getattr(config, "LLM_ENABLED", False):
-        result = chat_complete(
-            (
-                "请把下面的通知正文压缩成精炼版，保留事实，不要捏造。"
-                "优先保留时间、地点、截止、对象、报名方式和必要背景。"
-                f"输出控制在约 {budget} 字以内，可保留简短分行。"
-            ),
-            f"标题: {item.get('title', '')}\n正文:\n{content[:3500]}",
-            model=getattr(config, "SYNTHESIS_LLM_MODEL", "") or None,
-            max_tokens=300,
-            temperature=0,
-            task_label=f"正在压缩正文内容：{item.get('title', '')[:24]}",
-        )
-        if result:
-            candidate = _clean_text(result)
-            if _estimate_units(summary) + _estimate_units(candidate) <= ITEM_TOTAL_UNIT_LIMIT:
-                return candidate
-            return _clip_units(candidate, budget)
-
-    return _clip_units(cleaned, budget)
+    return _clean_text(result or fallback)
 
 
 def _clean_text(text: str) -> str:
@@ -414,29 +378,6 @@ def _summary_repeats_content(summary: str, content: str) -> bool:
     if not summary_key or not content_key:
         return False
     return content_key.startswith(summary_key) or summary_key == content_key
-
-
-def _estimate_units(text: str) -> int:
-    chinese = len(re.findall(r"[一-鿿]", text or ""))
-    english = len(re.findall(r"[A-Za-z0-9_]+", text or ""))
-    return chinese + english
-
-
-def _clip_units(text: str, limit: int) -> str:
-    result = []
-    units = 0
-    for token in re.finditer(r"[一-鿿]|[A-Za-z0-9_]+|\s+|.", text or ""):
-        part = token.group(0)
-        part_units = 0
-        if re.fullmatch(r"[一-鿿]", part):
-            part_units = 1
-        elif re.fullmatch(r"[A-Za-z0-9_]+", part):
-            part_units = 1
-        if units + part_units > limit:
-            break
-        units += part_units
-        result.append(part)
-    return "".join(result).strip()
 
 
 def _extract_inline_date(text: str) -> str:

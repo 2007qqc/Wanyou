@@ -7,3 +7,4 @@ llm_decisions.jsonl
 .env
 .env.*
 !.env.example
+.vscode/
