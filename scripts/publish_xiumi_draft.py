@@ -56,6 +56,10 @@ def _log_xiumi_debug(event: str, **data):
         pass
 
 
+def _print_xiumi_image_progress(message: str):
+    print(f"秀米：正文图片{message}", flush=True)
+
+
 def _extract_main_html(html_text: str) -> str:
     match = re.search(r"<main[^>]*class=[\"'][^\"']*page[^\"']*[\"'][^>]*>([\s\S]*?)</main>", html_text or "", flags=re.I)
     if match:
@@ -252,14 +256,14 @@ def _first_summary_line(markdown_text: str) -> str:
     return ""
 
 
-def _make_xiumi_browser(profile_dir: pathlib.Path, *, detach: bool = False):
+def _make_xiumi_browser(profile_dir: pathlib.Path):
     os.makedirs(config.SELENIUM_CACHE_DIR, exist_ok=True)
     os.environ.setdefault("SE_CACHE_PATH", os.path.abspath(config.SELENIUM_CACHE_DIR))
 
     browser_name = get_selenium_browser_name()
     if browser_supports_profile_dir(browser_name):
         profile_dir.mkdir(parents=True, exist_ok=True)
-    options = make_browser_options(browser_name, str(profile_dir), headless=False, detach=detach)
+    options = make_browser_options(browser_name, str(profile_dir), headless=False, detach=False)
     browser = make_webdriver(browser_name, options)
     browser._wanyou_browser_name = browser_name
     if getattr(config, "PAGE_LOAD_TIMEOUT", 0):
@@ -328,65 +332,6 @@ def _wait_for_manual_login(browser, timeout: int):
     return not _visible_login_links(browser)
 
 
-def _click_xiumi_create_candidate(browser, include_terms: list[str], *, exclude_terms: list[str] | None = None) -> dict:
-    script = """
-const includeTerms = arguments[0].map(t => String(t).toLowerCase());
-const excludeTerms = arguments[1].map(t => String(t).toLowerCase());
-function visible(el) {
-  const style = window.getComputedStyle(el);
-  const rect = el.getBoundingClientRect();
-  return style && style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0;
-}
-function haystack(el) {
-  return [
-    el.innerText, el.textContent, el.title, el.alt, el.getAttribute('aria-label'),
-    el.id, el.className, el.getAttribute('data-title'), el.getAttribute('data-name')
-  ].join(' ').replace(/\\s+/g, ' ').trim().toLowerCase();
-}
-const selector = [
-  'button', 'a', 'li', 'div', 'span', '[role="button"]', '[title]', '[aria-label]'
-].join(',');
-const candidates = Array.from(document.querySelectorAll(selector))
-  .filter(el => visible(el))
-  .map(el => {
-    const text = haystack(el);
-    let score = 0;
-    let matched = false;
-    for (const term of includeTerms) {
-      if (!term) continue;
-      if (text === term) {
-        score += 50;
-        matched = true;
-      } else if (text.includes(term)) {
-        score += 15;
-        matched = true;
-      }
-    }
-    if (!matched) return { el, score: -999, text };
-    for (const term of excludeTerms) {
-      if (term && text.includes(term)) score -= 60;
-    }
-    const tag = el.tagName.toLowerCase();
-    if (tag === 'button' || tag === 'a' || tag === 'li' || el.getAttribute('role') === 'button') score += 5;
-    return { el, score, text };
-  })
-  .filter(item => item.score > 0)
-  .sort((a, b) => b.score - a.score);
-for (const item of candidates.slice(0, 8)) {
-  try {
-    item.el.scrollIntoView({ block: 'center', inline: 'center' });
-    item.el.click();
-    return { clicked: true, score: item.score, text: item.text, candidates: candidates.length };
-  } catch (e) {}
-}
-return { clicked: false, text: '', candidates: candidates.length };
-"""
-    try:
-        return browser.execute_script(script, include_terms, exclude_terms or []) or {"clicked": False}
-    except Exception as exc:
-        return {"clicked": False, "error": str(exc)}
-
-
 def _page_excerpt(browser, limit: int = 300) -> str:
     try:
         text = browser.execute_script("return document.body ? document.body.innerText : '';") or ""
@@ -432,11 +377,22 @@ def _wait_for_xiumi_login_on_home(browser, home_url: str, login_timeout: int, wa
 def _open_xiumi_editor_from_my_xiumi(browser, home_url: str, login_timeout: int, wait_timeout: int):
     _wait_for_xiumi_login_on_home(browser, home_url, login_timeout, wait_timeout)
 
-    paper_state = _click_xiumi_create_candidate(browser, ["图文排版"], exclude_terms=["选择编辑器", "模板", "教程"])
+    paper_state = _click_xiumi_ui_candidates(browser, ["图文排版"], exclude_terms=["选择编辑器", "模板", "教程"])
     _log_xiumi_debug("xiumi_paper_entry_click", state=paper_state, url=browser.current_url)
     if paper_state.get("clicked"):
         print("秀米：已进入图文排版")
         time.sleep(2)
+        try:
+            _wait_editor_ready(browser, 3)
+            return
+        except Exception:
+            pass
+
+    try:
+        _wait_editor_ready(browser, 2)
+        return
+    except Exception:
+        pass
 
     create_steps = [
         ["新建图文", "创建图文", "新建空白图文", "空白图文"],
@@ -445,14 +401,14 @@ def _open_xiumi_editor_from_my_xiumi(browser, home_url: str, login_timeout: int,
     exclude = ["保存", "预览", "删除", "导出", "登录", "注册", "会员", "教程", "模板", "选择编辑器", "图文排版"]
     last_state = {}
     for terms in create_steps:
-        state = _click_xiumi_create_candidate(browser, terms, exclude_terms=exclude)
+        state = _click_xiumi_ui_candidates(browser, terms, exclude_terms=exclude)
         last_state = state
         _log_xiumi_debug("xiumi_create_click", terms=terms, state=state, url=browser.current_url)
         if state.get("clicked"):
             print("秀米：已新建图文")
             time.sleep(1)
 
-            type_state = _click_xiumi_create_candidate(
+            type_state = _click_xiumi_ui_candidates(
                 browser,
                 ["图文排版", "图文", "公众号图文"],
                 exclude_terms=["H5", "设计", "文档", "模板", "教程", "返回", "取消"],
@@ -498,31 +454,82 @@ el.dispatchEvent(new Event('change', { bubbles: true }));
 
 
 def _set_editor_html(browser, html_text: str):
-    editable = browser.find_element(By.XPATH, '//*[@contenteditable="true"]')
-    return bool(browser.execute_script(
+    state = browser.execute_script(
         """
-const el = arguments[0];
-const value = arguments[1];
-var applied = false;
-if (window.angular) {
+const value = arguments[0];
+const editables = Array.from(document.querySelectorAll('[contenteditable="true"]'));
+function visible(el) {
+  const style = window.getComputedStyle(el);
+  const rect = el.getBoundingClientRect();
+  return style && style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0;
+}
+function scopeWithCell(el) {
+  if (!window.angular) return null;
+  let node = el;
+  while (node) {
+    try {
+      const scope = window.angular.element(node).scope();
+      if (scope && scope.cell) return scope;
+    } catch (e) {}
+    node = node.parentElement;
+  }
+  return null;
+}
+let chosen = null;
+let chosenScore = -1;
+let chosenIndex = -1;
+const diagnostics = [];
+for (let index = 0; index < editables.length; index += 1) {
+  const el = editables[index];
+  const rect = el.getBoundingClientRect();
+  const text = String(el.innerText || el.textContent || '');
+  const html = String(el.innerHTML || '');
+  const scope = scopeWithCell(el);
+  let score = 0;
+  if (visible(el)) score += 20;
+  if (scope) score += 80;
+  if (html.includes('data-wanyou-image-placeholder')) score += 120;
+  if (text.includes('万有预报')) score += 30;
+  score += Math.min(60, Math.round((rect.width * rect.height) / 30000));
+  diagnostics.push({
+    index,
+    score,
+    hasCellScope: !!scope,
+    hasPlaceholder: html.includes('data-wanyou-image-placeholder'),
+    width: Math.round(rect.width),
+    height: Math.round(rect.height),
+    className: String(el.className || '').slice(0, 160),
+    text: text.replace(/\\s+/g, ' ').slice(0, 80)
+  });
+  if (score > chosenScore) {
+    chosen = el;
+    chosenScore = score;
+    chosenIndex = index;
+  }
+}
+if (!chosen) return { applied: false, reason: 'editable_missing', diagnostics };
+const scope = scopeWithCell(chosen);
+let modelApplied = false;
+if (scope) {
   try {
-    var scope = window.angular.element(el).scope();
-    if (scope && scope.cell) {
-      scope.$apply(function () {
-        scope.cell.text = value;
-      });
-      applied = true;
-    }
+    const applyFn = function () { scope.cell.text = value; };
+    if (scope.$apply) scope.$apply(applyFn);
+    else applyFn();
+    modelApplied = true;
   } catch (e) {}
 }
-el.innerHTML = value;
-el.dispatchEvent(new Event('input', { bubbles: true }));
-el.dispatchEvent(new Event('change', { bubbles: true }));
-return applied;
+chosen.innerHTML = value;
+chosen.dispatchEvent(new Event('input', { bubbles: true }));
+chosen.dispatchEvent(new Event('change', { bubbles: true }));
+try {
+  chosen.focus();
+  window.getSelection().removeAllRanges();
+} catch (e) {}
+return { applied: true, modelApplied, chosenIndex, chosenScore, diagnostics };
 """,
-        editable,
         html_text,
-    ))
+    ) or {}
+    return bool(state.get("applied") or state.get("modelApplied"))
 
 
 def _data_url_to_temp_image(src: str, temp_dir: pathlib.Path, index: int) -> pathlib.Path | None:
@@ -554,7 +561,7 @@ def _resolve_upload_image_path(src: str, asset_base_path: pathlib.Path, temp_dir
     return path if path.exists() else None
 
 
-def _image_sources_for_upload(html_text: str, asset_base_path: pathlib.Path, temp_dir: pathlib.Path) -> list[tuple[str, pathlib.Path]]:
+def _image_entries_for_upload(html_text: str, asset_base_path: pathlib.Path, temp_dir: pathlib.Path) -> list[dict]:
     result = []
     seen = set()
     for index, src in enumerate(re.findall(r"<img\b[^>]*\bsrc=(?:['\"])(.*?)(?:['\"])", html_text or "", flags=re.I), start=1):
@@ -562,12 +569,97 @@ def _image_sources_for_upload(html_text: str, asset_base_path: pathlib.Path, tem
             continue
         path = _resolve_upload_image_path(src, asset_base_path, temp_dir, index)
         if path and path.exists():
-            # Upload normal local assets before data URLs; Xiumi's COS endpoint
-            # is less tolerant of converted inline images.
-            result.append((_is_data_image_src(src), index, src, path))
+            result.append(
+                {
+                    "index": index,
+                    "source": src,
+                    "path": path,
+                    "is_data": _is_data_image_src(src),
+                    "key": _upload_image_key(path, src),
+                }
+            )
             seen.add(src)
-    result.sort(key=lambda item: (item[0], item[1]))
-    return [(src, path) for _is_data, _index, src, path in result]
+    return result
+
+
+def _upload_entries_in_safe_order(entries: list[dict]) -> list[dict]:
+    # Upload normal local assets before data URLs; Xiumi's COS endpoint is less
+    # tolerant of converted inline images. Final body order is restored later.
+    return sorted(entries, key=lambda item: (bool(item.get("is_data")), int(item.get("index") or 0)))
+
+
+def _image_entry_for_log(entry: dict, remote_url: str = "") -> dict:
+    path = entry.get("path")
+    source = str(entry.get("source", ""))
+    if _is_data_image_src(source):
+        source = source.split(";", 1)[0] + ";base64,..."
+    return {
+        "index": entry.get("index"),
+        "image": path.name if isinstance(path, pathlib.Path) else "",
+        "key": entry.get("key", ""),
+        "source": _short_url(source),
+        "remote_url": _short_url(remote_url),
+        "uploaded": bool(remote_url),
+    }
+
+
+def _html_image_order_for_log(html_text: str) -> list[dict]:
+    order = []
+    for index, src in enumerate(re.findall(r"<img\b[^>]*\bsrc=(?:['\"])(.*?)(?:['\"])", html_text or "", flags=re.I), start=1):
+        normalized = _normalize_xiumi_image_url(src)
+        logged_src = normalized
+        if _is_data_image_src(logged_src):
+            logged_src = logged_src.split(";", 1)[0] + ";base64,..."
+        order.append(
+            {
+                "index": index,
+                "key": _upload_image_key(None, src),
+                "src": _short_url(logged_src),
+                "is_xiumi": _looks_like_user_xiumi_image(normalized),
+            }
+        )
+    return order
+
+
+def _html_image_sources(html_text: str) -> list[str]:
+    return [
+        _normalize_xiumi_image_url(src)
+        for src in re.findall(r"<img\b[^>]*\bsrc=(?:['\"])(.*?)(?:['\"])", html_text or "", flags=re.I)
+        if src
+    ]
+
+
+def _rewrite_images_by_html_order(
+    html_text: str,
+    url_by_source: dict[str, str],
+    url_by_key: dict[str, str],
+) -> str:
+    replaced = 0
+
+    def repl(match):
+        nonlocal replaced
+        tag = match.group(0)
+        quote = match.group(1)
+        src = (match.group(2) or "").strip()
+        if not src or _is_remote_image_src(src):
+            return tag
+        remote_url = url_by_source.get(src, "")
+        if not remote_url:
+            key = _upload_image_key(None, src)
+            remote_url = url_by_key.get(key, "")
+        if not remote_url:
+            return tag
+        replaced += 1
+        return re.sub(r"\bsrc=(['\"])(.*?)\1", f"src={quote}{remote_url}{quote}", tag, count=1, flags=re.I)
+
+    rewritten = re.sub(r"<img\b[^>]*\bsrc=(['\"])(.*?)\1[^>]*>", repl, html_text or "", flags=re.I)
+    _log_xiumi_debug(
+        "xiumi_html_order_image_rewrite",
+        replaced=replaced,
+        source_mappings=len(url_by_source),
+        key_mappings=len(url_by_key),
+    )
+    return rewritten
 
 
 def _remote_image_sources_ordered(browser) -> list[str]:
@@ -603,6 +695,263 @@ def _remote_image_sources(browser) -> set[str]:
     return set(_remote_image_sources_ordered(browser))
 
 
+def _install_xiumi_upload_observer(browser):
+    script = r"""
+if (!window.__wanyouXiumiUploadObserverInstalled) {
+  window.__wanyouXiumiUploadObserverInstalled = true;
+  window.__wanyouXiumiUploadEvents = [];
+  const fileNamesFromBody = (body) => {
+    const names = [];
+    try {
+      if (body && typeof body.forEach === 'function') {
+        body.forEach((value) => {
+          if (value && typeof value === 'object' && 'name' in value) names.push(String(value.name || ''));
+        });
+      }
+    } catch (e) {}
+    return names.filter(Boolean);
+  };
+  const record = (kind, url, status, body, files) => {
+    try {
+      const text = String(body || '');
+      if (/上传|upload|img\.xiumi\.us|\/xmi\/ua\//i.test(String(url || '') + ' ' + text)) {
+        window.__wanyouXiumiUploadEvents.push({
+          time: Date.now(),
+          kind,
+          url: String(url || ''),
+          status: status || 0,
+          files: files || [],
+          body: text.slice(0, 200000)
+        });
+        if (window.__wanyouXiumiUploadEvents.length > 120) {
+          window.__wanyouXiumiUploadEvents = window.__wanyouXiumiUploadEvents.slice(-120);
+        }
+      }
+    } catch (e) {}
+  };
+  if (window.fetch) {
+    const originalFetch = window.fetch;
+    window.fetch = function() {
+      const requestUrl = arguments[0] && (arguments[0].url || arguments[0]);
+      const requestFiles = arguments[1] ? fileNamesFromBody(arguments[1].body) : [];
+      return originalFetch.apply(this, arguments).then(resp => {
+        try {
+          const clone = resp.clone();
+          clone.text().then(text => record('fetch', requestUrl, resp.status, text, requestFiles)).catch(() => {});
+        } catch (e) {}
+        return resp;
+      });
+    };
+  }
+  if (window.XMLHttpRequest) {
+    const OriginalXHR = window.XMLHttpRequest;
+    window.XMLHttpRequest = function() {
+      const xhr = new OriginalXHR();
+      let requestUrl = '';
+      const open = xhr.open;
+      xhr.open = function(method, url) {
+        requestUrl = url;
+        return open.apply(xhr, arguments);
+      };
+      xhr.addEventListener('loadend', function() {
+        try { record('xhr', requestUrl, xhr.status, xhr.responseText || '', xhr.__wanyouUploadFiles || []); } catch (e) {}
+      });
+      const send = xhr.send;
+      xhr.send = function(body) {
+        try { xhr.__wanyouUploadFiles = fileNamesFromBody(body); } catch (e) {}
+        return send.apply(xhr, arguments);
+      };
+      return xhr;
+    };
+  }
+}
+return true;
+"""
+    try:
+        browser.execute_script(script)
+    except Exception as exc:
+        _log_xiumi_debug("upload_observer_install_failed", error=str(exc))
+
+
+def _xiumi_observed_upload_assets(browser, since: int = 0) -> list[dict]:
+    try:
+        events = browser.execute_script("return window.__wanyouXiumiUploadEvents || [];") or []
+    except Exception:
+        return []
+    if not isinstance(events, list):
+        return []
+    assets = []
+    seen = set()
+    for event in events[max(0, since):]:
+        if not isinstance(event, dict):
+            continue
+        files = [str(name or "") for name in (event.get("files") or []) if str(name or "")]
+        for value in (event.get("url", ""), event.get("body", "")):
+            for url in _xiumi_image_urls_from_text(value):
+                key = (url, tuple(files))
+                if key in seen:
+                    continue
+                seen.add(key)
+                assets.append({"url": url, "text": " ".join(files), "files": files, "source": "observer"})
+    return assets
+
+
+def _xiumi_upload_event_count(browser) -> int:
+    try:
+        events = browser.execute_script("return window.__wanyouXiumiUploadEvents || [];") or []
+    except Exception:
+        return 0
+    return len(events) if isinstance(events, list) else 0
+
+
+def _xiumi_gallery_assets(browser) -> list[dict]:
+    script = r"""
+const results = [];
+const seen = new Set();
+const urlRe = /(https?:)?\/\/[^"'\s<>）)]*(?:img\.xiumi\.us|\/xmi\/ua\/)[^"'\s<>）)]*/ig;
+function cleanUrl(value) {
+  if (!value) return '';
+  let text = String(value).replace(/\\\//g, '/');
+  const match = text.match(urlRe);
+  if (!match || !match.length) return '';
+  let url = match[0];
+  if (url.startsWith('//')) url = 'https:' + url;
+  return url;
+}
+function add(url, text, source) {
+  url = cleanUrl(url);
+  if (!url || seen.has(url)) return;
+  seen.add(url);
+  results.push({ url, text: String(text || '').replace(/\s+/g, ' ').slice(0, 500), source });
+}
+for (const img of Array.from(document.querySelectorAll('img'))) {
+  const text = [
+    img.alt, img.title, img.getAttribute('data-name'), img.getAttribute('data-title'),
+    img.closest('li,div,section,figure') && img.closest('li,div,section,figure').innerText
+  ].join(' ');
+  add(img.getAttribute('src') || img.getAttribute('data-src') || '', text, 'img');
+}
+for (const el of Array.from(document.querySelectorAll('*'))) {
+  const text = [
+    el.innerText, el.textContent, el.title, el.getAttribute('alt'),
+    el.getAttribute('data-name'), el.getAttribute('data-title'), el.getAttribute('data-src')
+  ].join(' ');
+  add(text, text, 'text');
+  try {
+    const bg = window.getComputedStyle(el).backgroundImage || '';
+    add(bg, text, 'background');
+  } catch (e) {}
+}
+if (window.angular) {
+  const seenObjects = new Set();
+  function walk(obj, depth, label) {
+    if (!obj || depth > 5) return;
+    if (typeof obj === 'string') {
+      add(obj, label, 'angular');
+      return;
+    }
+    if (typeof obj !== 'object') return;
+    if (seenObjects.has(obj)) return;
+    seenObjects.add(obj);
+    const values = [];
+    for (const [key, value] of Object.entries(obj)) {
+      if (/name|file|title|text|url|src|image|img|pic|path/i.test(key)) {
+        values.push(String(value || ''));
+      }
+    }
+    const joined = values.join(' ');
+    add(joined, joined || label, 'angular');
+    for (const [key, value] of Object.entries(obj).slice(0, 80)) {
+      if (/^\$/.test(key)) continue;
+      if (/image|img|pic|upload|gallery|material|file|list|data|items/i.test(key)) walk(value, depth + 1, joined || label);
+    }
+  }
+  for (const el of Array.from(document.querySelectorAll('[ng-controller], [ng-repeat], .ng-scope, .ng-isolate-scope')).slice(0, 120)) {
+    try { walk(window.angular.element(el).scope(), 0, el.innerText || ''); } catch (e) {}
+    try { walk(window.angular.element(el).isolateScope(), 0, el.innerText || ''); } catch (e) {}
+  }
+}
+return results.slice(-300);
+"""
+    try:
+        values = browser.execute_script(script) or []
+    except Exception as exc:
+        _log_xiumi_debug("gallery_assets_failed", error=str(exc))
+        return []
+    assets = [item for item in values if isinstance(item, dict) and _looks_like_user_xiumi_image(item.get("url", ""))]
+    return assets
+
+
+def _upload_name_variants(path: pathlib.Path) -> set[str]:
+    name = path.name.lower()
+    stem = path.stem.lower()
+    variants = {name}
+    if stem:
+        variants.add(stem)
+        for ext in (".jpg", ".jpeg", ".png", ".gif", ".webp"):
+            variants.add(stem + ext)
+    return {variant for variant in variants if variant}
+
+
+def _upload_image_key(path: pathlib.Path | None, source: str = "") -> str:
+    if path:
+        stem = path.stem.lower().strip()
+        if stem:
+            return stem
+    cleaned = str(source or "").split("?", 1)[0].strip().strip("'").strip('"')
+    name = pathlib.Path(cleaned).name.lower()
+    return pathlib.Path(name).stem if name else ""
+
+
+def _asset_matches_upload_path(asset: dict, path: pathlib.Path) -> tuple[bool, int]:
+    files = [str(name or "").lower() for name in (asset.get("files") or []) if str(name or "")]
+    text = str(asset.get("text", "") or "").lower()
+    haystack = " ".join(files + [text])
+    variants = _upload_name_variants(path)
+    exact_name = path.name.lower()
+    if exact_name and any(exact_name == pathlib.Path(name).name.lower() for name in files):
+        return True, 100
+    for name in files:
+        basename = pathlib.Path(name).name.lower()
+        if basename in variants:
+            return True, 90
+    for variant in variants:
+        if variant and variant in haystack:
+            return True, 60 if "." in variant else 30
+    return False, 0
+
+
+def _xiumi_uploaded_urls_for_paths(browser, image_paths: list[pathlib.Path], before: set[str], observed_since: int = 0) -> list[str]:
+    assets = _xiumi_observed_upload_assets(browser, observed_since) + _xiumi_gallery_assets(browser)
+    matched: dict[int, str] = {}
+    for asset in assets:
+        url = _normalize_xiumi_image_url(asset.get("url", ""))
+        if not url:
+            continue
+        best_index = -1
+        best_score = 0
+        for index, path in enumerate(image_paths):
+            if index in matched:
+                continue
+            matched_path, score = _asset_matches_upload_path(asset, path)
+            if matched_path and score > best_score:
+                best_index = index
+                best_score = score
+        if best_index >= 0:
+            matched[best_index] = url
+
+    ordered_by_index = [""] * len(image_paths)
+    for index, path in enumerate(image_paths):
+        url = matched.get(index, "")
+        if url:
+            ordered_by_index[index] = url
+    if all(ordered_by_index):
+        return ordered_by_index
+
+    ordered = [url for url in ordered_by_index if url]
+    return ordered
+
+
 def _short_url(value: str) -> str:
     text = str(value or "")
     return text if len(text) <= 180 else text[:177] + "..."
@@ -610,9 +959,23 @@ def _short_url(value: str) -> str:
 
 def _normalize_xiumi_image_url(value: str) -> str:
     text = str(value or "").strip()
+    text = text.replace("\\/", "/")
     if text.startswith("//"):
         return "https:" + text
     return text
+
+
+def _xiumi_image_urls_from_text(text: str) -> list[str]:
+    normalized = str(text or "").replace("\\/", "/")
+    urls = []
+    for match in re.finditer(r"(?:(?:https?:)?//)?img\.xiumi\.us/[^\s\"'<>）)]+|(?:https?:)?//[^\s\"'<>）)]*/xmi/ua/[^\s\"'<>）)]+", normalized, flags=re.I):
+        url = match.group(0)
+        if url.startswith("img.xiumi.us/"):
+            url = "https://" + url
+        url = _normalize_xiumi_image_url(url)
+        if _looks_like_user_xiumi_image(url) and url not in urls:
+            urls.append(url)
+    return urls
 
 
 def _looks_like_user_xiumi_image(value: str) -> bool:
@@ -658,7 +1021,6 @@ return Array.from(document.querySelectorAll('input[type="file"]')).map((el, inde
     except Exception:
         return []
     diagnostics = [value for value in values if isinstance(value, dict)]
-    _log_xiumi_debug("file_input_diagnostics", inputs=diagnostics)
     return diagnostics
 
 
@@ -740,17 +1102,9 @@ def _open_xiumi_image_library(browser) -> dict:
         click_state = _click_xiumi_ui_candidates(browser, terms, exclude_terms=blocked, limit=1)
         clicked = int(click_state.get("clicked", 0) or 0)
         state[key] = state.get(key, 0) + clicked
-        _log_xiumi_debug(
-            "xiumi_ui_click_step",
-            step=key,
-            terms=terms,
-            click_state=click_state,
-            file_inputs=_file_input_count(browser),
-        )
         if clicked:
             time.sleep(0.8)
     state["file_inputs_after"] = _file_input_count(browser)
-    _log_xiumi_debug("xiumi_library_open_state", **state)
     return state
 
 
@@ -797,7 +1151,6 @@ def _find_image_file_input(browser):
     chosen = ranked[0] if ranked else None
     if chosen:
         score, index, element, meta = chosen
-        _log_xiumi_debug("file_input_selected", index=index, score=score, total=len(inputs), meta=meta)
         return element, len(inputs), library_state
     _log_xiumi_debug("file_input_missing", total=0, library_state=library_state)
     return None, len(inputs), library_state
@@ -807,7 +1160,6 @@ def _prepare_file_input_for_upload(browser, file_input):
     try:
         state = _file_input_state(browser, file_input)
         if state.get("visible") and int(state.get("width") or 0) > 0 and int(state.get("height") or 0) > 0:
-            _log_xiumi_debug("file_input_prepare_skipped", reason="already_visible", state=state)
             return
         browser.execute_script(
             """
@@ -830,7 +1182,6 @@ el.style.zIndex = 2147483647;
 """,
             file_input,
         )
-        _log_xiumi_debug("file_input_prepared", state_before=state, state_after=_file_input_state(browser, file_input))
     except Exception:
         pass
 
@@ -855,7 +1206,6 @@ try {
         state = browser.execute_script(script, file_input) or {}
     except Exception as exc:
         state = {"clicked": False, "error": str(exc)}
-    _log_xiumi_debug("upload_control_activate", state=state)
     return state
 
 
@@ -903,29 +1253,6 @@ def _attach_files_with_cdp(browser, file_input, image_paths: list[pathlib.Path])
         return {"applied": False, "selector": selector, "reason": str(exc)}
 
 
-def _attach_file_with_cdp(browser, file_input, image_path: pathlib.Path) -> dict:
-    return _attach_files_with_cdp(browser, file_input, [image_path])
-
-
-def _attach_file_to_input(browser, file_input, image_path: pathlib.Path) -> tuple[dict, dict]:
-    before_state = _file_input_state(browser, file_input)
-    _activate_file_upload_control(browser, file_input)
-    try:
-        file_input.send_keys(str(image_path))
-    except Exception as exc:
-        _log_xiumi_debug("send_keys_exception", image=image_path.name, error=str(exc), state=before_state)
-
-    after_send_keys_state = _file_input_state(browser, file_input)
-    if int(after_send_keys_state.get("filesLength") or 0) < 1:
-        cdp_state = _attach_file_with_cdp(browser, file_input, image_path)
-        _log_xiumi_debug("cdp_file_attach", image=image_path.name, state=cdp_state)
-        after_send_keys_state = _file_input_state(browser, file_input)
-
-    _dispatch_file_input_events(browser, file_input)
-    after_dispatch_state = _file_input_state(browser, file_input)
-    return after_send_keys_state, after_dispatch_state
-
-
 def _attach_files_to_input(browser, file_input, image_paths: list[pathlib.Path]) -> tuple[dict, dict]:
     before_state = _file_input_state(browser, file_input)
     _activate_file_upload_control(browser, file_input)
@@ -944,7 +1271,8 @@ def _attach_files_to_input(browser, file_input, image_paths: list[pathlib.Path])
     expected = len(image_paths)
     if int(after_send_keys_state.get("filesLength") or 0) < expected:
         cdp_state = _attach_files_with_cdp(browser, file_input, image_paths)
-        _log_xiumi_debug("batch_cdp_file_attach", images=[path.name for path in image_paths], state=cdp_state)
+        if not cdp_state.get("applied"):
+            _log_xiumi_debug("batch_cdp_file_attach_failed", images=[path.name for path in image_paths], state=cdp_state)
         after_send_keys_state = _file_input_state(browser, file_input)
 
     _dispatch_file_input_events(browser, file_input)
@@ -998,15 +1326,28 @@ if (window.angular) {
         pass
 
 
-def _xiumi_visible_messages(browser) -> list[str]:
+def _xiumi_upload_messages(browser) -> list[str]:
     script = """
 const parts = [];
-for (const el of Array.from(document.querySelectorAll('body, .toast, .toast-message, .alert, .modal, .tips, [class*="toast"], [class*="alert"], [class*="message"], [class*="error"]'))) {
+const selector = [
+  '.toast', '.toast-message', '.alert', '.modal', '.tips', '.notify', '.notification',
+  '[class*="toast"]', '[class*="alert"]', '[class*="message"]', '[class*="error"]',
+  '[class*="notify"]', '[class*="upload"]', '[role="alert"]'
+].join(',');
+for (const el of Array.from(document.querySelectorAll(selector))) {
   const style = window.getComputedStyle(el);
   const rect = el.getBoundingClientRect();
   if (!style || style.display === 'none' || style.visibility === 'hidden' || rect.width <= 0 || rect.height <= 0) continue;
   const text = String(el.innerText || el.textContent || '').replace(/\\s+/g, ' ').trim();
-  if (text && /上传|失败|错误|cos|COS|图片|图库/.test(text)) parts.push(text.slice(0, 500));
+  if (text && /上传|失败|成功|错误|cos|COS|图片|图库|稍后/.test(text)) parts.push(text.slice(0, 500));
+}
+if (!parts.length && document.body) {
+  const body = String(document.body.innerText || document.body.textContent || '').replace(/\\s+/g, ' ');
+  const patterns = ['图片正在上传，请稍后再试', '上传成功', '上传失败', '上传完成'];
+  for (const pattern of patterns) {
+    const index = body.indexOf(pattern);
+    if (index >= 0) parts.push(body.slice(Math.max(0, index - 80), index + pattern.length + 80));
+  }
 }
 return Array.from(new Set(parts)).slice(0, 8);
 """
@@ -1015,6 +1356,154 @@ return Array.from(new Set(parts)).slice(0, 8);
     except Exception:
         return []
     return [str(value) for value in values if value]
+
+
+def _xiumi_upload_state(browser) -> dict:
+    messages = _xiumi_upload_messages(browser)
+    text = "\n".join(messages)
+    busy = bool(re.search(r"(正在上传|上传中|请稍后再试|稍后再试)", text, flags=re.I))
+    failed = bool(re.search(r"(上传失败|失败\\[?cos\\]?|COS|错误)", text, flags=re.I))
+    success_counts = [int(value) for value in re.findall(r"(\d+)\s*张图片上传成功", text)]
+    success = bool(success_counts or re.search(r"(上传成功|上传完成|已上传)", text, flags=re.I))
+    return {
+        "busy": busy,
+        "failed": failed,
+        "success": success,
+        "success_count": max(success_counts) if success_counts else 0,
+        "messages": messages,
+    }
+
+
+def _wait_xiumi_upload_idle(browser, *, context: str = "") -> dict:
+    stall_seconds = max(30, int(getattr(config, "XIUMI_IMAGE_UPLOAD_STALL_SECONDS", 180) or 180))
+    last_busy = time.time()
+    announced = False
+    while True:
+        state = _xiumi_upload_state(browser)
+        if not state.get("busy"):
+            return state
+        if not announced:
+            _print_xiumi_image_progress("：秀米仍在处理上一批上传，等待完成")
+            announced = True
+        if time.time() - last_busy > stall_seconds:
+            _log_xiumi_debug("upload_idle_wait_stalled", context=context, state=state, stall_seconds=stall_seconds)
+            return state
+        time.sleep(0.6)
+
+
+def _wait_for_xiumi_uploaded_sources(
+    browser,
+    before: set[str],
+    expected: int,
+    *,
+    context: str,
+    image_paths: list[pathlib.Path] | None = None,
+    observed_since: int = 0,
+) -> list[str]:
+    stall_seconds = max(30, int(getattr(config, "XIUMI_IMAGE_UPLOAD_STALL_SECONDS", 180) or 180))
+    last_progress = time.time()
+    last_count = -1
+    last_state_key = None
+    announced_busy = False
+    last_resolve_at = 0.0
+    last_named_sources = []
+
+    while True:
+        after_ordered = _remote_image_sources_ordered(browser)
+        new_sources = [src for src in after_ordered if src and src not in before and not src.startswith("data:")]
+        user_sources = [_normalize_xiumi_image_url(src) for src in new_sources if _looks_like_user_xiumi_image(src)]
+        state = _xiumi_upload_state(browser)
+        named_sources = []
+        should_resolve_assets = (
+            bool(image_paths)
+            and (
+                len(user_sources) >= expected
+                or state.get("success")
+                or int(state.get("success_count") or 0) > 0
+                or bool(new_sources)
+                or time.time() - last_resolve_at > 5
+            )
+        )
+        if should_resolve_assets:
+            last_resolve_at = time.time()
+            named_sources = _xiumi_uploaded_urls_for_paths(browser, image_paths, before, observed_since=observed_since)
+            if named_sources:
+                last_named_sources = named_sources
+            for url in named_sources:
+                if url not in user_sources:
+                    user_sources.append(url)
+
+        state_key = (len(new_sources), len(user_sources), bool(state.get("busy")), bool(state.get("success")), bool(state.get("failed")), int(state.get("success_count") or 0))
+        if state.get("busy") and not announced_busy:
+            _print_xiumi_image_progress("：等待秀米完成当前上传")
+            announced_busy = True
+
+        if len(user_sources) != last_count or state_key != last_state_key:
+            last_progress = time.time()
+            last_count = len(user_sources)
+            last_state_key = state_key
+
+        if state.get("failed"):
+            return named_sources if image_paths else user_sources
+
+        if len(named_sources) >= expected and not state.get("busy"):
+            return named_sources[-expected:]
+
+        if image_paths and len(user_sources) >= expected and not state.get("busy") and not named_sources:
+            _log_xiumi_debug(
+                "upload_urls_unmatched_by_name",
+                context=context,
+                expected=expected,
+                user_sources=len(user_sources),
+                images=[path.name for path in image_paths],
+            )
+            return []
+
+        if image_paths:
+            if time.time() - last_progress > stall_seconds:
+                _log_xiumi_debug(
+                    "upload_wait_stalled",
+                    context=context,
+                    expected=expected,
+                    matched_sources=len(last_named_sources),
+                    state=state,
+                    stall_seconds=stall_seconds,
+                )
+                return last_named_sources
+            time.sleep(0.6)
+            continue
+
+        if len(user_sources) >= expected and not state.get("busy"):
+            return user_sources[-expected:]
+
+        success_count = int(state.get("success_count") or 0)
+        generic_single_success = expected == 1 and state.get("success") and not state.get("busy")
+        if (success_count >= expected or generic_single_success) and not state.get("busy"):
+            named_sources = _xiumi_uploaded_urls_for_paths(browser, image_paths or [], before, observed_since=observed_since)
+            if len(named_sources) >= expected:
+                return named_sources[-expected:]
+            _log_xiumi_debug(
+                "upload_success_count_without_urls",
+                context=context,
+                expected=expected,
+                success_count=success_count,
+                named_sources=len(named_sources),
+                messages=state.get("messages"),
+            )
+            return named_sources
+
+        if time.time() - last_progress > stall_seconds:
+            _log_xiumi_debug(
+                "upload_wait_stalled",
+                context=context,
+                expected=expected,
+                user_sources=len(user_sources),
+                state=state,
+                stall_seconds=stall_seconds,
+            )
+            return user_sources
+
+        time.sleep(0.6)
 
 
 def _write_probe_image(temp_dir: pathlib.Path) -> pathlib.Path:
@@ -1027,17 +1516,19 @@ def _write_probe_image(temp_dir: pathlib.Path) -> pathlib.Path:
     return path
 
 
-def _probe_xiumi_image_upload(browser, timeout: int) -> dict:
+def _probe_xiumi_image_upload(browser) -> dict:
     with tempfile.TemporaryDirectory(prefix="wanyou_xiumi_probe_") as temp:
         image_path = _write_probe_image(pathlib.Path(temp))
         print("秀米：正在检查图片上传链路")
-        remote_url = _upload_one_xiumi_image(browser, image_path, timeout)
+        _install_xiumi_upload_observer(browser)
+        remote_url = _upload_one_xiumi_image(browser, image_path)
     status = "ok" if remote_url else "failed"
     _log_xiumi_debug("upload_probe", status=status, remote_url=_short_url(remote_url))
     return {"status": status, "remote_url": remote_url}
 
 
-def _upload_one_xiumi_image(browser, image_path: pathlib.Path, timeout: int) -> str:
+def _upload_one_xiumi_image(browser, image_path: pathlib.Path) -> str:
+    _wait_xiumi_upload_idle(browser, context=f"before_single:{image_path.name}")
     file_input, input_count, library_state = _find_image_file_input(browser)
     if file_input is None:
         _log_xiumi_debug("upload_unavailable", image=image_path.name, input_count=input_count, library_state=library_state)
@@ -1046,75 +1537,40 @@ def _upload_one_xiumi_image(browser, image_path: pathlib.Path, timeout: int) -> 
     # Open the library first, then take the baseline. Otherwise existing gallery
     # and template thumbnails are misidentified as images uploaded by this run.
     before = _remote_image_sources(browser)
-    _log_xiumi_debug(
-        "upload_start",
-        image=image_path.name,
-        before_remote_count=len(before),
-    )
-
+    observed_since = _xiumi_upload_event_count(browser)
     try:
         _prepare_file_input_for_upload(browser, file_input)
-        before_dispatch_state, after_dispatch_state = _attach_file_to_input(browser, file_input, image_path)
-        _log_xiumi_debug(
-            "send_keys_done",
-            image=image_path.name,
-            path=str(image_path),
-            before_dispatch_state=before_dispatch_state,
-            after_dispatch_state=after_dispatch_state,
-        )
-        if int(after_dispatch_state.get("filesLength") or 0) < 1:
-            _log_xiumi_debug(
-                "file_input_empty_after_dispatch",
-                image=image_path.name,
-                before_dispatch_state=before_dispatch_state,
-                after_dispatch_state=after_dispatch_state,
-                note="Xiumi may clear file inputs immediately after processing starts.",
-            )
+        _attach_files_to_input(browser, file_input, [image_path])
     except Exception as exc:
         _log_xiumi_debug("send_keys_failed", image=image_path.name, error=str(exc))
         return ""
 
-    first_timeout = int(getattr(config, "XIUMI_FIRST_IMAGE_UPLOAD_WAIT_SECONDS", 0) or 0)
-    effective_timeout = max(5, first_timeout or timeout)
-    deadline = time.time() + effective_timeout
-    logged_source_sets = set()
-    while time.time() < deadline:
-        after = _remote_image_sources(browser)
-        new_sources = [src for src in after - before if src and not src.startswith("data:")]
-        user_sources = [src for src in new_sources if _looks_like_user_xiumi_image(src)]
-        source_key = (len(new_sources), len(user_sources), tuple(sorted(new_sources[:3])))
-        if new_sources and source_key not in logged_source_sets:
-            logged_source_sets.add(source_key)
-            _log_xiumi_debug(
-                "gallery_new_sources",
-                image=image_path.name,
-                count=len(new_sources),
-                user_count=len(user_sources),
-                samples=[_short_url(src) for src in new_sources[:5]],
-            )
-        if user_sources:
-            return _normalize_xiumi_image_url(user_sources[-1])
-        time.sleep(0.5)
-    visible_messages = _xiumi_visible_messages(browser)
+    user_sources = _wait_for_xiumi_uploaded_sources(
+        browser,
+        before,
+        1,
+        context=f"single:{image_path.name}",
+        image_paths=[image_path],
+        observed_since=observed_since,
+    )
+    if user_sources:
+        return _normalize_xiumi_image_url(user_sources[-1])
+    state = _xiumi_upload_state(browser)
     _log_xiumi_debug(
-        "upload_timeout",
+        "upload_incomplete",
         image=image_path.name,
         gallery_new_sources=len(_remote_image_sources(browser) - before),
         user_gallery_sources=len([src for src in _remote_image_sources(browser) - before if _looks_like_user_xiumi_image(src)]),
-        visible_messages=visible_messages,
-        timeout=timeout,
-        effective_timeout=effective_timeout,
+        state=state,
     )
     return ""
 
 
-def _upload_xiumi_image_batch(browser, image_paths: list[pathlib.Path], timeout: int) -> list[str]:
+def _upload_xiumi_image_batch(browser, image_paths: list[pathlib.Path]) -> list[str]:
     if not image_paths:
         return []
-    if len(image_paths) == 1:
-        remote_url = _upload_one_xiumi_image(browser, image_paths[0], timeout)
-        return [remote_url] if remote_url else []
 
+    _wait_xiumi_upload_idle(browser, context=f"before_batch:{','.join(path.name for path in image_paths)}")
     file_input, input_count, library_state = _find_image_file_input(browser)
     if file_input is None:
         _log_xiumi_debug(
@@ -1126,68 +1582,32 @@ def _upload_xiumi_image_batch(browser, image_paths: list[pathlib.Path], timeout:
         return []
 
     before = set(_remote_image_sources_ordered(browser))
-    _log_xiumi_debug(
-        "batch_upload_start",
-        images=[path.name for path in image_paths],
-        before_remote_count=len(before),
-    )
-
+    observed_since = _xiumi_upload_event_count(browser)
     try:
         _prepare_file_input_for_upload(browser, file_input)
-        before_dispatch_state, after_dispatch_state = _attach_files_to_input(browser, file_input, image_paths)
-        _log_xiumi_debug(
-            "batch_send_keys_done",
-            images=[path.name for path in image_paths],
-            paths=[str(path) for path in image_paths],
-            before_dispatch_state=before_dispatch_state,
-            after_dispatch_state=after_dispatch_state,
-        )
-        if int(after_dispatch_state.get("filesLength") or 0) < 1:
-            _log_xiumi_debug(
-                "batch_file_input_empty_after_dispatch",
-                images=[path.name for path in image_paths],
-                before_dispatch_state=before_dispatch_state,
-                after_dispatch_state=after_dispatch_state,
-                note="Xiumi may clear file inputs immediately after processing starts.",
-            )
+        _attach_files_to_input(browser, file_input, image_paths)
     except Exception as exc:
         _log_xiumi_debug("batch_send_keys_failed", images=[path.name for path in image_paths], error=str(exc))
         return []
 
-    first_timeout = int(getattr(config, "XIUMI_FIRST_IMAGE_UPLOAD_WAIT_SECONDS", 0) or 0)
-    effective_timeout = max(10, first_timeout, timeout * len(image_paths))
-    effective_timeout = min(effective_timeout, 180)
-    deadline = time.time() + effective_timeout
-    logged_counts = set()
-    while time.time() < deadline:
-        after_ordered = _remote_image_sources_ordered(browser)
-        new_sources = [src for src in after_ordered if src and src not in before and not src.startswith("data:")]
-        user_sources = [_normalize_xiumi_image_url(src) for src in new_sources if _looks_like_user_xiumi_image(src)]
-        count_key = (len(new_sources), len(user_sources))
-        if user_sources and count_key not in logged_counts:
-            logged_counts.add(count_key)
-            _log_xiumi_debug(
-                "batch_gallery_new_sources",
-                images=[path.name for path in image_paths],
-                count=len(new_sources),
-                user_count=len(user_sources),
-                samples=[_short_url(src) for src in user_sources[:8]],
-            )
-        if len(user_sources) >= len(image_paths):
-            return user_sources[-len(image_paths):]
-        time.sleep(0.5)
-
-    visible_messages = _xiumi_visible_messages(browser)
+    user_sources = _wait_for_xiumi_uploaded_sources(
+        browser,
+        before,
+        len(image_paths),
+        context=f"batch:{','.join(path.name for path in image_paths)}",
+        image_paths=image_paths,
+        observed_since=observed_since,
+    )
+    if len(user_sources) >= len(image_paths):
+        return user_sources[-len(image_paths):]
     after = set(_remote_image_sources_ordered(browser))
-    user_sources = [_normalize_xiumi_image_url(src) for src in after - before if _looks_like_user_xiumi_image(src)]
+    state = _xiumi_upload_state(browser)
     _log_xiumi_debug(
-        "batch_upload_timeout",
+        "batch_upload_incomplete_wait",
         images=[path.name for path in image_paths],
         gallery_new_sources=len(after - before),
         user_gallery_sources=len(user_sources),
-        visible_messages=visible_messages,
-        timeout=timeout,
-        effective_timeout=effective_timeout,
+        state=state,
     )
     return user_sources
 
@@ -1197,19 +1617,27 @@ def _chunks(values: list, size: int):
         yield values[index:index + max(1, size)]
 
 
-def _upload_xiumi_images_and_rewrite(browser, html_text: str, asset_base_path: pathlib.Path, timeout: int) -> tuple[str, dict]:
+def _upload_xiumi_images_and_rewrite(browser, html_text: str, asset_base_path: pathlib.Path) -> tuple[str, dict]:
     mode = str(getattr(config, "XIUMI_IMAGE_MODE", "upload") or "upload").strip().lower()
     if mode != "upload":
         return html_text, {"status": "skipped", "uploaded": 0, "total": 0}
 
     with tempfile.TemporaryDirectory(prefix="wanyou_xiumi_images_") as temp:
         temp_dir = pathlib.Path(temp)
-        images = _image_sources_for_upload(html_text, asset_base_path, temp_dir)
-        _log_xiumi_debug("upload_candidates", total=len(images), images=[path.name for _source, path in images])
-        if not images:
+        html_order_entries = _image_entries_for_upload(html_text, asset_base_path, temp_dir)
+        upload_entries = _upload_entries_in_safe_order(html_order_entries)
+        _log_xiumi_debug(
+            "upload_candidates",
+            total=len(upload_entries),
+            local_upload_html_order=[_image_entry_for_log(entry) for entry in html_order_entries],
+            upload_order=[_image_entry_for_log(entry) for entry in upload_entries],
+        )
+        if not upload_entries:
             return html_text, {"status": "no_images", "uploaded": 0, "total": 0}
+        _install_xiumi_upload_observer(browser)
 
-        rewritten = html_text
+        url_by_source: dict[str, str] = {}
+        url_by_key: dict[str, str] = {}
         uploaded = 0
         failures = 0
         consecutive_failures = 0
@@ -1217,11 +1645,24 @@ def _upload_xiumi_images_and_rewrite(browser, html_text: str, asset_base_path: p
         max_failures = max(1, int(getattr(config, "XIUMI_IMAGE_UPLOAD_MAX_FAILURES", 3) or 3))
         retries = max(0, int(getattr(config, "XIUMI_IMAGE_UPLOAD_RETRIES", 1) or 0))
         batch_size = max(1, int(getattr(config, "XIUMI_IMAGE_UPLOAD_BATCH_SIZE", 6) or 1))
+        total_batches = (len(upload_entries) + batch_size - 1) // batch_size
+        _print_xiumi_image_progress(f"：发现 {len(upload_entries)} 张，开始上传")
 
-        def upload_single(source: str, image_path: pathlib.Path) -> str:
+        def record_upload(entry: dict, remote_url: str, mode: str):
+            nonlocal uploaded, consecutive_failures
+            source = str(entry.get("source") or "")
+            image_path = entry["path"]
+            key = str(entry.get("key") or _upload_image_key(image_path, source))
+            url_by_source[source] = remote_url
+            if key:
+                url_by_key[key] = remote_url
+            uploaded += 1
+            consecutive_failures = 0
+
+        def upload_single(image_path: pathlib.Path) -> str:
             remote_url = ""
             for attempt in range(retries + 1):
-                remote_url = _upload_one_xiumi_image(browser, image_path, timeout)
+                remote_url = _upload_one_xiumi_image(browser, image_path)
                 if remote_url:
                     break
                 if attempt < retries:
@@ -1229,45 +1670,52 @@ def _upload_xiumi_images_and_rewrite(browser, html_text: str, asset_base_path: p
                     time.sleep(1)
             return remote_url
 
-        for batch in _chunks(images, batch_size):
+        for batch_index, batch in enumerate(_chunks(upload_entries, batch_size), start=1):
             batch_urls = []
             if len(batch) > 1:
-                batch_urls = _upload_xiumi_image_batch(browser, [image_path for _source, image_path in batch], timeout)
+                _print_xiumi_image_progress(
+                    f"：第 {batch_index}/{total_batches} 批上传中（{len(batch)} 张，已完成 {uploaded}/{len(upload_entries)}）"
+                )
+                batch_urls = _upload_xiumi_image_batch(browser, [entry["path"] for entry in batch])
                 if len(batch_urls) == len(batch):
-                    _log_xiumi_debug(
-                        "batch_upload_success",
-                        images=[path.name for _source, path in batch],
-                        uploaded=len(batch_urls),
+                    _print_xiumi_image_progress(
+                        f"：第 {batch_index}/{total_batches} 批完成，累计 {uploaded + len(batch_urls)}/{len(upload_entries)}"
                     )
                 else:
                     _log_xiumi_debug(
                         "batch_upload_incomplete",
-                        images=[path.name for _source, path in batch],
+                        images=[entry["path"].name for entry in batch],
                         received=len(batch_urls),
                         expected=len(batch),
                     )
+                    _print_xiumi_image_progress(
+                        f"：第 {batch_index}/{total_batches} 批未完整确认，改为逐张补传"
+                    )
                     batch_urls = []
+            else:
+                _print_xiumi_image_progress(
+                    f"：第 {batch_index}/{total_batches} 批逐张上传中（已完成 {uploaded}/{len(upload_entries)}）"
+                )
 
             if batch_urls:
-                for (source, image_path), remote_url in zip(batch, batch_urls):
-                    rewritten = rewritten.replace(source, remote_url)
-                    uploaded += 1
-                    consecutive_failures = 0
-                    _log_xiumi_debug("upload_success", image=image_path.name, remote_url=_short_url(remote_url), uploaded=uploaded, mode="batch")
+                for entry, remote_url in zip(batch, batch_urls):
+                    record_upload(entry, remote_url, "batch")
                 continue
 
-            for source, image_path in batch:
-                remote_url = upload_single(source, image_path)
+            for entry in batch:
+                image_path = entry["path"]
+                remote_url = upload_single(image_path)
                 if remote_url:
-                    rewritten = rewritten.replace(source, remote_url)
-                    uploaded += 1
-                    consecutive_failures = 0
-                    _log_xiumi_debug("upload_success", image=image_path.name, remote_url=_short_url(remote_url), uploaded=uploaded, mode="single")
+                    record_upload(entry, remote_url, "single")
+                    _print_xiumi_image_progress(f"：已上传 {uploaded}/{len(upload_entries)}")
                     continue
 
                 failures += 1
                 consecutive_failures += 1
                 skipped_images.append(image_path.name)
+                _print_xiumi_image_progress(
+                    f"：{image_path.name} 未确认上传成功，暂跳过（已上传 {uploaded}/{len(upload_entries)}，跳过 {len(skipped_images)}）"
+                )
                 _log_xiumi_debug(
                     "upload_failure",
                     image=image_path.name,
@@ -1283,17 +1731,17 @@ def _upload_xiumi_images_and_rewrite(browser, html_text: str, asset_base_path: p
                         failures=failures,
                         consecutive_failures=consecutive_failures,
                         uploaded=uploaded,
-                        total=len(images),
+                        total=len(upload_entries),
                     )
                     break
             if uploaded == 0 and consecutive_failures >= max_failures:
                 break
 
-        status = "ok" if uploaded == len(images) else "partial" if uploaded else "failed"
+        status = "ok" if uploaded == len(upload_entries) else "partial" if uploaded else "failed"
         if status == "ok":
-            print(f"秀米：正文图片已上传完成（{uploaded}/{len(images)}）")
+            print(f"秀米：正文图片已上传完成（{uploaded}/{len(upload_entries)}）")
         elif uploaded:
-            print(f"秀米：部分正文图片已上传（{uploaded}/{len(images)}），未上传图片将保留提示")
+            print(f"秀米：部分正文图片已上传（{uploaded}/{len(upload_entries)}），未上传图片将保留提示")
         else:
             print("秀米：正文图片未能自动上传，将在草稿中保留提示")
         _log_xiumi_debug(
@@ -1302,11 +1750,19 @@ def _upload_xiumi_images_and_rewrite(browser, html_text: str, asset_base_path: p
             uploaded=uploaded,
             failed=failures,
             skipped_images=skipped_images,
-            total=len(images),
+            total=len(upload_entries),
         )
         if uploaded:
-            return _remove_unuploaded_images_for_xiumi(rewritten), {"status": status, "uploaded": uploaded, "total": len(images)}
-        return _remove_images_for_xiumi(html_text), {"status": status, "uploaded": 0, "total": len(images)}
+            mapping_order = []
+            for entry in html_order_entries:
+                source = str(entry.get("source") or "")
+                key = str(entry.get("key") or "")
+                mapping_order.append(_image_entry_for_log(entry, url_by_source.get(source) or url_by_key.get(key) or ""))
+            _log_xiumi_debug("xiumi_image_order_mapping", mapping_order=mapping_order)
+            rewritten = _rewrite_images_by_html_order(html_text, url_by_source, url_by_key)
+            _log_xiumi_debug("xiumi_final_html_image_order", order=_html_image_order_for_log(rewritten))
+            return _remove_unuploaded_images_for_xiumi(rewritten), {"status": status, "uploaded": uploaded, "total": len(upload_entries)}
+        return _remove_images_for_xiumi(html_text), {"status": status, "uploaded": 0, "total": len(upload_entries)}
 
 
 def _mark_xiumi_document_dirty(browser) -> dict:
@@ -1352,6 +1808,56 @@ out.empty = scope.status && scope.status.show ? scope.status.show.empty : null;
 return out;
 """,
     ) or {}
+
+
+def _log_xiumi_editor_image_order(browser, expected_html: str, stage: str):
+    expected_order = _html_image_order_for_log(expected_html)
+    expected_urls = _html_image_sources(expected_html)
+    script = """
+const expected = arguments[0];
+const editables = Array.from(document.querySelectorAll('[contenteditable="true"]'));
+function srcsFor(el) {
+  return Array.from(el.querySelectorAll('img')).map(img => img.getAttribute('src') || '').filter(Boolean);
+}
+return editables.map((el, index) => {
+  const rect = el.getBoundingClientRect();
+  const srcs = srcsFor(el);
+  const matches = srcs.filter(src => expected.includes(src)).length;
+  return {
+    index,
+    width: Math.round(rect.width),
+    height: Math.round(rect.height),
+    image_count: srcs.length,
+    expected_matches: matches,
+    text: String(el.innerText || el.textContent || '').replace(/\\s+/g, ' ').slice(0, 120),
+    srcs: srcs.map(src => src.length > 180 ? src.slice(0, 177) + '...' : src)
+  };
+});
+"""
+    try:
+        editables = browser.execute_script(script, expected_urls) or []
+    except Exception as exc:
+        _log_xiumi_debug("xiumi_editor_image_order", stage=stage, error=str(exc), expected_order=expected_order)
+        return
+    best = {}
+    if isinstance(editables, list) and editables:
+        best = max(
+            (item for item in editables if isinstance(item, dict)),
+            key=lambda item: (int(item.get("expected_matches") or 0), int(item.get("image_count") or 0), int(item.get("width") or 0) * int(item.get("height") or 0)),
+            default={},
+        )
+    actual_srcs = [_normalize_xiumi_image_url(str(src)) for src in (best.get("srcs") or [])]
+    _log_xiumi_debug(
+        "xiumi_editor_image_order",
+        stage=stage,
+        expected_count=len(expected_urls),
+        actual_count=len(actual_srcs),
+        exact_order_match=actual_srcs[: len(expected_urls)] == expected_urls,
+        expected_order=expected_order,
+        actual_order=[{"index": index, "src": _short_url(src)} for index, src in enumerate(actual_srcs, start=1)],
+        best_editable=best,
+        all_editables=editables,
+    )
 
 
 def _click_save(browser):
@@ -1402,15 +1908,13 @@ def _fill_xiumi_body_then_images(browser, content_html: str, asset_base_path: pa
     text_first_html = _replace_images_with_placeholders_for_xiumi(content_html)
     model_applied = _set_editor_html(browser, text_first_html)
     _log_xiumi_debug("xiumi_body_text_model_applied", applied=bool(model_applied))
+    _log_xiumi_editor_image_order(browser, text_first_html, "text_placeholders")
 
     upload_state = {"status": "skipped", "uploaded": 0, "total": 0}
     mode = str(getattr(config, "XIUMI_IMAGE_MODE", "upload") or "upload").strip().lower()
     if mode == "upload":
         if upload_probe:
-            probe_state = _probe_xiumi_image_upload(
-                browser,
-                max(5, getattr(config, "XIUMI_FIRST_IMAGE_UPLOAD_WAIT_SECONDS", 20)),
-            )
+            probe_state = _probe_xiumi_image_upload(browser)
             if probe_state.get("status") != "ok":
                 print("秀米：测试图片上传失败，跳过正文图片上传。")
                 upload_state = {"status": "probe_failed", "uploaded": 0, "total": _image_payload_stats(content_html)["image_count"]}
@@ -1426,12 +1930,12 @@ def _fill_xiumi_body_then_images(browser, content_html: str, asset_base_path: pa
             browser,
             content_html,
             asset_base_path,
-            max(5, getattr(config, "XIUMI_IMAGE_UPLOAD_WAIT_SECONDS", 8)),
         )
         _log_xiumi_debug("xiumi_image_upload_state", **upload_state)
         print("秀米：正在应用最终排版")
         model_applied = _set_editor_html(browser, final_html)
         _log_xiumi_debug("xiumi_body_image_model_applied", applied=bool(model_applied))
+        _log_xiumi_editor_image_order(browser, final_html, "final_layout")
 
     dirty_state = _mark_xiumi_document_dirty(browser)
     _log_xiumi_debug("xiumi_dirty_state", **dirty_state)

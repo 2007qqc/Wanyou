@@ -87,11 +87,10 @@ macOS 默认使用 `chrome`，Windows 默认使用 `edge`。如需切换浏览�
 | `XIUMI_HOME_URL` | 秀米“我的秀米/工作台”入口，登录确认后从这里新建图文 |
 | `XIUMI_IMAGE_MODE` | 秀米正文图片处理：`upload`、`auto`、`inline` 或 `omit` |
 | `XIUMI_MAX_INLINE_IMAGE_HTML_CHARS` | `auto` 模式下允许内联图片后的最大正文体积 |
-| `XIUMI_IMAGE_UPLOAD_WAIT_SECONDS` | `upload` 模式下等待单张图片上传完成的秒数 |
-| `XIUMI_FIRST_IMAGE_UPLOAD_WAIT_SECONDS` | 第一张图片上传探测等待秒数，便于图库首次加载 |
 | `XIUMI_IMAGE_UPLOAD_MAX_FAILURES` | 开头连续几张图片拿不到秀米素材 URL 后判定上传链路异常并降级 |
 | `XIUMI_IMAGE_UPLOAD_RETRIES` | 单张图片上传失败后的轻量重试次数 |
 | `XIUMI_IMAGE_UPLOAD_BATCH_SIZE` | 秀米图库批量上传每组图片数量；设为 `1` 可回到逐张上传 |
+| `XIUMI_IMAGE_UPLOAD_STALL_SECONDS` | 上传状态长时间没有变化时的卡死保护，不作为正常推进依据 |
 
 创建本地 `.env`：
 
@@ -152,11 +151,10 @@ ZHIPUAI_API_KEY="your-glm-api-key"
 XIUMI_HOME_URL="https://xiumi.us/studio/v5?lang=zh_CN#/"
 XIUMI_IMAGE_MODE="upload"
 XIUMI_MAX_INLINE_IMAGE_HTML_CHARS="900000"
-XIUMI_IMAGE_UPLOAD_WAIT_SECONDS="8"
-XIUMI_FIRST_IMAGE_UPLOAD_WAIT_SECONDS="20"
 XIUMI_IMAGE_UPLOAD_MAX_FAILURES="3"
 XIUMI_IMAGE_UPLOAD_RETRIES="1"
 XIUMI_IMAGE_UPLOAD_BATCH_SIZE="6"
+XIUMI_IMAGE_UPLOAD_STALL_SECONDS="180"
 ```
 
 Windows PowerShell 可以用记事本编辑：
@@ -246,7 +244,7 @@ python scripts/publish_xiumi_draft.py output/xxx/wanyou_xxx.html --markdown outp
 - 先打开“我的秀米/工作台”并确认登录状态；如果未登录，等待用户登录，登录成功后自动继续
 - 从“我的秀米”页面点击新建图文，不在登录前直接打开 `paper/for/new`
 - 优先读取 Markdown，转换为适合秀米的富文本 HTML
-- 按“文字 -> 图片 -> 排版”的顺序写入：先写入正文文字和图片占位，避免登录或图库操作打断正文；再打开“我的图库/上传图片(无水印)”上传正文图片，拿到秀米素材 URL；最后把图片 URL 回填到 HTML 中并重新应用正文排版
+- 按“文字 -> 图片 -> 排版”的顺序写入：先写入正文文字和图片占位，避免登录或图库操作打断正文；再打开“我的图库/上传图片(无水印)”上传正文图片，按原始 HTML 图片顺序匹配秀米素材 URL；最后把图片 URL 回填到 HTML 中并重新应用正文排版
 - `XIUMI_IMAGE_MODE=upload` 是默认推荐模式；本地图片会优先上传，`data:image/base64` 内联图会后置，避免单张内联图 COS 失败阻断全部图片
 - 默认尝试将项目根目录的 `badge.png` 设为草稿封面
 - 点击保存并输出 `xiumi_draft_url`
