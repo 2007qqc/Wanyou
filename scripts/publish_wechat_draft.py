@@ -23,6 +23,7 @@ if str(ROOT) not in sys.path:
 
 from generators.wechat_inline import markdown_to_wechat_inline_html
 from wanyou.env_loader import load_project_env
+from wanyou.image_paths import clean_markdown_image_target, resolve_existing_image_path
 
 load_project_env()
 
@@ -165,8 +166,10 @@ def _is_remote_url(src: str) -> bool:
 
 
 def _resolve_image_path(src: str, html_path: pathlib.Path) -> pathlib.Path:
-    cleaned = html.unescape(src or "").strip().strip("'").strip('"')
-    cleaned = cleaned.split("?", 1)[0]
+    resolved = resolve_existing_image_path(src, base_dir=html_path.parent, extra_roots=(ROOT,))
+    if resolved is not None:
+        return resolved
+    cleaned = clean_markdown_image_target(src)
     candidate = pathlib.Path(cleaned)
     if candidate.is_absolute():
         return candidate

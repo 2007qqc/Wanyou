@@ -21,6 +21,7 @@ if str(ROOT) not in sys.path:
 import config
 from generators.wechat_inline import markdown_to_wechat_inline_html
 from wanyou.browser import browser_supports_profile_dir, get_selenium_browser_name, make_browser_options, make_webdriver
+from wanyou.image_paths import clean_markdown_image_target, resolve_existing_image_path
 
 _XIUMI_DEBUG_LOG_PATH = None
 
@@ -316,6 +317,81 @@ def _visible_login_links(browser):
     return links
 
 
+def _visible_header_login_links(browser):
+    script = """
+const out = [];
+const viewportH = window.innerHeight || document.documentElement.clientHeight || 900;
+const viewportW = window.innerWidth || document.documentElement.clientWidth || 1200;
+for (const el of Array.from(document.querySelectorAll('a,button,[role="button"]'))) {
+  const text = String(el.innerText || el.textContent || '').replace(/\\s+/g, ' ').trim();
+  if (!/(登录|登陆)/.test(text)) continue;
+  const style = window.getComputedStyle(el);
+  const rect = el.getBoundingClientRect();
+  const visible = style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0;
+  if (!visible) continue;
+  const inHeader = rect.top >= 0 && rect.top <= Math.max(120, viewportH * 0.18);
+  const nearRight = rect.left >= viewportW * 0.55;
+  if (inHeader && nearRight) {
+    out.push({ text, top: Math.round(rect.top), left: Math.round(rect.left), width: Math.round(rect.width), height: Math.round(rect.height) });
+  }
+}
+return out;
+"""
+    try:
+        return browser.execute_script(script) or []
+    except Exception:
+        return []
+
+
+def _visible_login_controls(browser):
+    script = """
+const out = [];
+for (const el of Array.from(document.querySelectorAll('a,button,[role="button"],.usr-sign-in'))) {
+  const text = String(el.innerText || el.textContent || el.getAttribute('aria-label') || el.getAttribute('title') || '').replace(/\\s+/g, ' ').trim();
+  if (!/(登录|登陆|注册)/.test(text)) continue;
+  if (/(登录中|正在登录|退出登录|退出登陆)/.test(text)) continue;
+  const style = window.getComputedStyle(el);
+  const rect = el.getBoundingClientRect();
+  const visible = style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0;
+  if (!visible) continue;
+  out.push({ text, top: Math.round(rect.top), left: Math.round(rect.left), width: Math.round(rect.width), height: Math.round(rect.height) });
+}
+return out;
+"""
+    try:
+        return browser.execute_script(script) or []
+    except Exception:
+        return []
+
+
+def _xiumi_login_state(browser) -> dict:
+    controls = _visible_login_controls(browser)
+    header_controls = _visible_header_login_links(browser)
+    excerpt = _page_excerpt(browser, 500)
+    if not controls and re.search(r"(?<!退出)(登录|登陆|注册)", excerpt) and not re.search(r"(登录中|正在登录|退出登录|退出登陆)", excerpt):
+        controls = [{"text": "登录", "source": "body_excerpt"}]
+    has_paper_entry = _xiumi_home_has_paper_entry(browser)
+    settling = _xiumi_login_is_settling(browser)
+    try:
+        has_editor = (
+            len(browser.find_elements(By.CSS_SELECTOR, "button.btn-img.op-btn.save")) > 0
+            and len(browser.find_elements(By.XPATH, '//*[@contenteditable="true"]')) > 0
+        )
+    except Exception:
+        has_editor = False
+    authenticated = (has_paper_entry or has_editor) and not controls and not header_controls and not settling
+    return {
+        "authenticated": authenticated,
+        "has_paper_entry": has_paper_entry,
+        "has_editor": has_editor,
+        "settling": settling,
+        "login_controls": controls,
+        "header_login_controls": header_controls,
+        "url": getattr(browser, "current_url", ""),
+        "excerpt": excerpt,
+    }
+
+
 def _wait_for_manual_login(browser, timeout: int):
     links = _visible_login_links(browser)
     if links:
@@ -323,13 +399,28 @@ def _wait_for_manual_login(browser, timeout: int):
             links[0].click()
         except Exception:
             pass
-        print("秀米：请在打开的浏览器中完成登录。程序会自动检测登录状态并继续，无需回终端按回车。")
-        deadline = time.time() + timeout
-        while time.time() < deadline:
-            if not _visible_login_links(browser):
-                return True
-            time.sleep(1)
-    return not _visible_login_links(browser)
+
+    print("秀米：请在打开的浏览器中完成登录。程序会自动检测登录状态并继续，无需回终端按回车。")
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        state = _xiumi_login_state(browser)
+        if state.get("authenticated"):
+            _log_xiumi_debug("xiumi_manual_login_confirmed", state=state)
+            return True
+        time.sleep(1)
+    _log_xiumi_debug("xiumi_manual_login_timeout", state=_xiumi_login_state(browser))
+    return False
+
+
+def _ensure_xiumi_logged_in_before_edit(browser, context: str):
+    state = _xiumi_login_state(browser)
+    _log_xiumi_debug("xiumi_login_guard", context=context, state=state)
+    if state.get("authenticated"):
+        return
+    controls = state.get("login_controls") or state.get("header_login_controls") or []
+    if controls:
+        raise RuntimeError(f"秀米尚未登录，页面仍显示登录入口，已停止自动编辑。context={context}")
+    raise RuntimeError(f"秀米登录状态未确认，已停止自动编辑。context={context}")
 
 
 def _page_excerpt(browser, limit: int = 300) -> str:
@@ -346,13 +437,25 @@ def _xiumi_login_is_settling(browser) -> bool:
     return any(term in excerpt for term in settling_terms)
 
 
+def _xiumi_home_has_paper_entry(browser) -> bool:
+    try:
+        text = browser.execute_script("return document.body ? document.body.innerText : '';") or ""
+    except Exception:
+        return False
+    normalized = re.sub(r"\s+", " ", str(text))
+    return "我的秀米" in normalized and "图文排版" in normalized
+
+
 def _wait_until_xiumi_home_settled(browser, timeout: int) -> bool:
     deadline = time.time() + max(5, timeout)
     while time.time() < deadline:
-        if not _visible_login_links(browser) and not _xiumi_login_is_settling(browser):
+        state = _xiumi_login_state(browser)
+        if state.get("authenticated"):
+            _log_xiumi_debug("xiumi_home_settled", state=state)
             return True
         time.sleep(1)
-    return not _visible_login_links(browser) and not _xiumi_login_is_settling(browser)
+    _log_xiumi_debug("xiumi_home_not_settled", state=_xiumi_login_state(browser))
+    return False
 
 
 def _wait_for_xiumi_login_on_home(browser, home_url: str, login_timeout: int, wait_timeout: int):
@@ -360,7 +463,9 @@ def _wait_for_xiumi_login_on_home(browser, home_url: str, login_timeout: int, wa
     browser.get(home_url)
     WebDriverWait(browser, wait_timeout).until(lambda d: d.execute_script("return document.readyState") in ("interactive", "complete"))
 
-    if _visible_login_links(browser):
+    initial_state = _xiumi_login_state(browser)
+    _log_xiumi_debug("xiumi_login_initial_state", state=initial_state)
+    if not initial_state.get("authenticated"):
         logged_in = _wait_for_manual_login(browser, login_timeout)
         if not logged_in:
             raise RuntimeError("秀米登录未完成，已超过等待时间。")
@@ -432,6 +537,7 @@ def _open_xiumi_editor_from_my_xiumi(browser, home_url: str, login_timeout: int,
 def _open_xiumi_editor(browser, home_url: str, login_timeout: int, wait_timeout: int):
     _open_xiumi_editor_from_my_xiumi(browser, home_url, login_timeout, wait_timeout)
     _wait_editor_ready(browser, wait_timeout)
+    _ensure_xiumi_logged_in_before_edit(browser, "editor_ready")
 
 
 def _set_input_value(browser, css_selector: str, value: str):
@@ -554,7 +660,10 @@ def _resolve_upload_image_path(src: str, asset_base_path: pathlib.Path, temp_dir
         return _data_url_to_temp_image(src, temp_dir, index)
     if not src or _is_remote_image_src(src):
         return None
-    cleaned = str(src).split("?", 1)[0].strip().strip("'").strip('"')
+    resolved = resolve_existing_image_path(src, base_dir=asset_base_path.parent, extra_roots=(ROOT,))
+    if resolved is not None:
+        return resolved
+    cleaned = clean_markdown_image_target(src)
     path = pathlib.Path(cleaned)
     if not path.is_absolute():
         path = (asset_base_path.parent / path).resolve()
@@ -1873,7 +1982,7 @@ def _wait_for_save_result(browser, old_url: str, timeout: int) -> tuple[str, str
             return "url_changed", current_url
         if current_url != old_url and "/for/new/" not in current_url:
             return "url_changed", current_url
-        if _visible_login_links(browser):
+        if _visible_login_controls(browser) or _visible_login_links(browser):
             return "login_required", current_url
         time.sleep(1)
     return "timeout", browser.current_url
@@ -1888,6 +1997,7 @@ def _save_diagnostics(browser) -> dict:
     return {
         "url": browser.current_url,
         "login_links": len(_visible_login_links(browser)),
+        "login_controls": len(_visible_login_controls(browser)),
         "save_buttons": len(browser.find_elements(By.CSS_SELECTOR, "button.btn-img.op-btn.save")),
         "editable": len(browser.find_elements(By.XPATH, '//*[@contenteditable="true"]')),
         "body_excerpt": body_text[:240],

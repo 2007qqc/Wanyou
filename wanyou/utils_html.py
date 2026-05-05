@@ -73,7 +73,7 @@ def download_images_and_rewrite(html_text, base_url, session, images_dir, image_
                 for chunk in resp.iter_content(chunk_size=8192):
                     if chunk:
                         f.write(chunk)
-            return f'src="{local_path}"'
+            return f'src="{local_path.replace(os.sep, "/")}"'
         except Exception:
             return match.group(0)
 

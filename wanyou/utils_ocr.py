@@ -6,6 +6,7 @@ import re
 import requests
 
 import config
+from wanyou.image_paths import clean_markdown_image_target, resolve_existing_image_path
 from wanyou.utils_llm import multimodal_complete
 
 
@@ -141,7 +142,10 @@ def _extract_image_path(markdown_target):
         target = target[1:-1].strip()
     if '"' in target:
         target = target.split('"', 1)[0].strip()
-    return target
+    resolved = resolve_existing_image_path(target, base_dir=os.getcwd())
+    if resolved is not None:
+        return str(resolved)
+    return clean_markdown_image_target(target)
 
 
 def convert_markdown_images_to_text(markdown_text):

@@ -5,6 +5,7 @@ import shutil
 from typing import Dict, List, Tuple
 
 import config
+from wanyou.image_paths import clean_markdown_image_target, is_remote_or_data_image, resolve_existing_image_path
 
 
 THEME_SOURCE_DIR = os.path.normpath(
@@ -147,43 +148,15 @@ def _resolve_image_src(src: str, markdown_path: str, output_path: str) -> str:
     cleaned = src.strip().strip("<>").strip('"').strip("'")
     if not cleaned:
         return cleaned
-    if re.match(r"^(https?:)?//", cleaned) or re.match(r"^[a-zA-Z][a-zA-Z0-9+.-]*:", cleaned):
+    if is_remote_or_data_image(cleaned):
         return cleaned
 
-    normalized = cleaned.replace("\\", os.sep).replace("/", os.sep)
     markdown_dir = os.path.dirname(markdown_path)
-    candidates = []
-    if os.path.isabs(normalized):
-        candidates.append(normalized)
+    resolved_path = resolve_existing_image_path(cleaned, base_dir=markdown_dir)
+    if resolved_path is not None:
+        resolved = str(resolved_path)
     else:
-        candidates.append(os.path.normpath(os.path.join(markdown_dir, normalized)))
-        candidates.append(os.path.normpath(os.path.join(os.getcwd(), normalized)))
-        basename = os.path.basename(normalized)
-        fixed_basename = re.sub(r"^([A-Za-z]+)(\d{4})(\.[^.]+)$", r"\1_\2\3", basename)
-        if "images" + os.sep + "inline" in normalized:
-            candidates.append(os.path.normpath(os.path.join(markdown_dir, "images", "inline", fixed_basename)))
-            candidates.append(os.path.normpath(os.path.join(markdown_dir, "images", "inline", basename)))
-        fixed_normalized = re.sub(
-            rf"images{re.escape(os.sep)}wanyou(?=\d)",
-            f"images{os.sep}_wanyou_",
-            normalized,
-        )
-        if fixed_normalized != normalized:
-            candidates.append(os.path.normpath(os.path.join(markdown_dir, fixed_normalized)))
-        fixed_normalized = re.sub(
-            rf"images{re.escape(os.sep)}wanyou_(\d{{8}}_\d{{4}})",
-            rf"images{os.sep}_wanyou_\1",
-            normalized,
-        )
-        if fixed_normalized != normalized:
-            candidates.append(os.path.normpath(os.path.join(markdown_dir, fixed_normalized)))
-        match = re.search(r"output" + re.escape(os.sep) + r"\d{12}" + re.escape(os.sep) + r"images" + re.escape(os.sep) + r"inline" + re.escape(os.sep) + r"([^" + re.escape(os.sep) + r"]+)$", normalized)
-        if match:
-            stale_basename = match.group(1)
-            fixed_stale_basename = re.sub(r"^([A-Za-z]+)(\d{4})(\.[^.]+)$", r"\1_\2\3", stale_basename)
-            candidates.append(os.path.normpath(os.path.join(markdown_dir, "images", "inline", fixed_stale_basename)))
-
-    resolved = next((path for path in candidates if os.path.exists(path)), candidates[0])
+        resolved = os.path.normpath(os.path.join(markdown_dir, clean_markdown_image_target(cleaned)))
     relative = os.path.relpath(resolved, start=os.path.dirname(output_path))
     return relative.replace("\\", "/")
 
