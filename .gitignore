@@ -8,3 +8,4 @@ llm_decisions.jsonl
 .env.*
 !.env.example
 .vscode/
+.claude/

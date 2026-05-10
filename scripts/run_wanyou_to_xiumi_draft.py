@@ -1,4 +1,5 @@
 import argparse
+import os
 import pathlib
 import sys
 
@@ -55,8 +56,13 @@ def main():
     elif args.public_only:
         public_only = True
 
+    username = os.environ.get("WANYOU_USERNAME", "")
+    password = os.environ.get("WANYOU_PASSWORD", "")
+
     print("[1/2] Running Wanyou pipeline...")
     result = run_pipeline(
+        username=username,
+        password=password,
         public_only=public_only,
         include_wechat=not args.skip_wechat,
         synthesize=not args.skip_synthesis,
