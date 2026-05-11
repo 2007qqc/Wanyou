@@ -1448,11 +1448,11 @@ for (const el of Array.from(document.querySelectorAll(selector))) {
   const rect = el.getBoundingClientRect();
   if (!style || style.display === 'none' || style.visibility === 'hidden' || rect.width <= 0 || rect.height <= 0) continue;
   const text = String(el.innerText || el.textContent || '').replace(/\\s+/g, ' ').trim();
-  if (text && /上传|失败|成功|错误|cos|COS|图片|图库|稍后/.test(text)) parts.push(text.slice(0, 500));
+  if (text && /上传|失败|成功|错误|cos|COS|图片|图库|稍后|超过|太大|超出|大小|尺寸|MB|不支持/.test(text)) parts.push(text.slice(0, 500));
 }
 if (!parts.length && document.body) {
   const body = String(document.body.innerText || document.body.textContent || '').replace(/\\s+/g, ' ');
-  const patterns = ['图片正在上传，请稍后再试', '上传成功', '上传失败', '上传完成'];
+  const patterns = ['图片正在上传，请稍后再试', '上传成功', '上传失败', '上传完成', '超过', '太大', '不支持', '失败'];
   for (const pattern of patterns) {
     const index = body.indexOf(pattern);
     if (index >= 0) parts.push(body.slice(Math.max(0, index - 80), index + pattern.length + 80));
@@ -1471,8 +1471,8 @@ def _xiumi_upload_state(browser) -> dict:
     messages = _xiumi_upload_messages(browser)
     text = "\n".join(messages)
     busy = bool(re.search(r"(正在上传|上传中|请稍后再试|稍后再试)", text, flags=re.I))
-    failed = bool(re.search(r"(上传失败|失败\\[?cos\\]?|COS|错误)", text, flags=re.I))
-    success_counts = [int(value) for value in re.findall(r"(\d+)\s*张图片上传成功", text)]
+    failed = bool(re.search(r"(上传失败|失败|错误|超过|太大|超出|大小限制|不支持|MB)", text, flags=re.I))
+    success_counts = [int(value) for value in re.findall(r"(\d+)\s*张(?:图片)?上传成功", text)]
     success = bool(success_counts or re.search(r"(上传成功|上传完成|已上传)", text, flags=re.I))
     return {
         "busy": busy,
@@ -1554,6 +1554,22 @@ def _wait_for_xiumi_uploaded_sources(
 
         if state.get("failed"):
             return named_sources if image_paths else user_sources
+
+        # When Xiumi is idle and reports partial completion (some images failed
+        # e.g. due to file size), return what we have instead of waiting for the
+        # full stall timeout.
+        settled_count = int(state.get("success_count") or 0)
+        if settled_count > 0 and not state.get("busy"):
+            sources_to_return = named_sources if image_paths else user_sources
+            if sources_to_return:
+                _log_xiumi_debug(
+                    "upload_settled_partial",
+                    context=context,
+                    expected=expected,
+                    success_count=settled_count,
+                    matched_sources=len(sources_to_return),
+                )
+                return sources_to_return
 
         if len(named_sources) >= expected and not state.get("busy"):
             return named_sources[-expected:]
@@ -1752,7 +1768,7 @@ def _upload_xiumi_images_and_rewrite(browser, html_text: str, asset_base_path: p
         consecutive_failures = 0
         skipped_images = []
         max_failures = max(1, int(getattr(config, "XIUMI_IMAGE_UPLOAD_MAX_FAILURES", 3) or 3))
-        retries = max(0, int(getattr(config, "XIUMI_IMAGE_UPLOAD_RETRIES", 1) or 0))
+        retries = max(0, int(getattr(config, "XIUMI_IMAGE_UPLOAD_RETRIES", 2) or 0))
         batch_size = max(1, int(getattr(config, "XIUMI_IMAGE_UPLOAD_BATCH_SIZE", 6) or 1))
         total_batches = (len(upload_entries) + batch_size - 1) // batch_size
         _print_xiumi_image_progress(f"：发现 {len(upload_entries)} 张，开始上传")
@@ -1768,7 +1784,7 @@ def _upload_xiumi_images_and_rewrite(browser, html_text: str, asset_base_path: p
             uploaded += 1
             consecutive_failures = 0
 
-        def upload_single(image_path: pathlib.Path) -> str:
+        def upload_single(image_path: pathlib.Path, entry_index: int = 0, total: int = 0) -> str:
             remote_url = ""
             for attempt in range(retries + 1):
                 remote_url = _upload_one_xiumi_image(browser, image_path)
@@ -1776,7 +1792,17 @@ def _upload_xiumi_images_and_rewrite(browser, html_text: str, asset_base_path: p
                     break
                 if attempt < retries:
                     _log_xiumi_debug("upload_retry", image=image_path.name, attempt=attempt + 1, retries=retries)
+                    _print_xiumi_image_progress(
+                        f"：{image_path.name} 上传失败，重试 {attempt + 1}/{retries}"
+                    )
                     time.sleep(1)
+            if not remote_url:
+                state = _xiumi_upload_state(browser)
+                failure_msgs = state.get("messages") or []
+                reason = "; ".join(failure_msgs[:2]) if failure_msgs else "未知错误（可能文件过大或格式不支持）"
+                _print_xiumi_image_progress(
+                    f"：{image_path.name} 经 {retries + 1} 次尝试后仍上传失败：{reason}"
+                )
             return remote_url
 
         for batch_index, batch in enumerate(_chunks(upload_entries, batch_size), start=1):
@@ -1813,7 +1839,7 @@ def _upload_xiumi_images_and_rewrite(browser, html_text: str, asset_base_path: p
 
             for entry in batch:
                 image_path = entry["path"]
-                remote_url = upload_single(image_path)
+                remote_url = upload_single(image_path, entry.get("index", 0), len(upload_entries))
                 if remote_url:
                     record_upload(entry, remote_url, "single")
                     _print_xiumi_image_progress(f"：已上传 {uploaded}/{len(upload_entries)}")
