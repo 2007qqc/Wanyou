@@ -22,7 +22,7 @@ def _match_any(text: str, keywords) -> bool:
 
 def apply_keyword_rules(title: str, snippet: str = "") -> Optional[bool]:
     text = f"{title} {snippet}"
-    if _match_any(text, config.LLM_FORCE_NO_KEYWORDS):
+    if _match_any(title, config.LLM_FORCE_NO_KEYWORDS):
         return False
     if _match_any(text, config.LLM_FORCE_YES_KEYWORDS):
         return True
