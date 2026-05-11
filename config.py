@@ -80,7 +80,7 @@ MYHOME_NO_CONSIDER = ["学生社区中心信息周报", "学生区室外大型�
 LIB_NO_CONSIDER = []
 LIB_CONSIDER = ["信息", "资源", "研究"]
 HALL_NO_CONSIDER = []
-PHYSICS_REPORT_FORCE_KEYWORDS = ["学术报告", "学术讲座", "报告", "讲座", "colloquium", "seminar"]
+PHYSICS_REPORT_FORCE_KEYWORDS = ["学术报告", "学术讲座", "报告", "讲座", "colloquium", "seminar", "讲坛", "论坛"]
 PHYSICS_REPORT_LOCATION_KEYWORDS = ["W101", "W105", "理科楼", "物理楼"]
 
 # myhome 图片 OCR

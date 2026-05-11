@@ -27,12 +27,6 @@ DEFAULT_REPORT_KEYWORDS = [
 DEFAULT_LOCATION_KEYWORDS = ["W101", "W105", "物理楼", "理科楼"]
 DEFAULT_REPORT_EXCLUDE_KEYWORDS = [
     "学位授权点建设报告",
-    "招聘信息",
-    "导师及研究方向",
-    "本科生工作组",
-    "研究生工作组",
-    "新闻动态",
-    "公告",
 ]
 
 
@@ -46,7 +40,7 @@ def _config_keywords(name: str, fallback: list[str]) -> list[str]:
     return values + [item for item in fallback if item not in values]
 
 
-def _looks_like_report(title: str) -> bool:
+def _looks_like_report(title: str, parent_text: str = "", href: str = "") -> bool:
     text = (title or "").strip()
     if not text:
         return False
@@ -54,7 +48,15 @@ def _looks_like_report(title: str) -> bool:
     if any(keyword.lower() in lowered for keyword in DEFAULT_REPORT_EXCLUDE_KEYWORDS):
         return False
     keywords = _config_keywords("PHYSICS_REPORT_FORCE_KEYWORDS", DEFAULT_REPORT_KEYWORDS)
-    return any(keyword.lower() in lowered for keyword in keywords)
+    if any(keyword.lower() in lowered for keyword in keywords):
+        return True
+    if parent_text:
+        parent_lowered = parent_text.lower()
+        if any(keyword.lower() in parent_lowered for keyword in keywords):
+            return True
+    if re.search(r'/info/\d+/', href or ""):
+        return True
+    return False
 
 
 def _looks_like_non_report_page(title: str, content_text: str = "") -> bool:
@@ -169,7 +171,7 @@ def _extract_report_fields_with_llm(title: str, publish_date: str, detail_url: s
         "你负责从清华物理系学术报告原文中提取关键信息。"
         "请忽略乱码、导航、页脚和无关模板内容，只保留确认度高的报告信息。"
         '只输出 JSON，对象字段固定为 "title", "speaker", "time", "location", "summary"。'
-        "summary 用简体中文，控制在 90 字内，不要捏造。缺失字段填空字符串。"
+        "summary 必须保留原文语言，英文原文保留英文，中文原文保留中文，严禁翻译。不要限制字数，完整保留摘要内容，不要捏造。缺失字段填空字符串。"
     )
     user_prompt = (
         f"页面标题：{title}\n"
@@ -182,7 +184,7 @@ def _extract_report_fields_with_llm(title: str, publish_date: str, detail_url: s
         system_prompt,
         user_prompt,
         model=getattr(config, "PHYSICS_EXTRACT_LLM_MODEL", "") or None,
-        max_tokens=300,
+        max_tokens=800,
         temperature=0,
         task_label=f"正在提取学术报告字段：{title[:24]}",
     )
@@ -378,17 +380,23 @@ def _extract_main_html(html_text: str) -> str:
     return html_text
 
 
+def _extract_parent_text_from_link(link) -> str:
+    try:
+        parent = link.find_element(By.XPATH, './ancestor::*[self::li or self::tr or self::div][1]')
+        return (parent.text or "").strip()
+    except Exception:
+        return ""
+
+
 def _extract_list_date_from_link(link) -> str:
     candidates = []
     try:
         candidates.append((link.text or "").strip())
     except Exception:
         pass
-    try:
-        parent = link.find_element(By.XPATH, './ancestor::*[self::li or self::tr or self::div][1]')
-        candidates.append((parent.text or "").strip())
-    except Exception:
-        pass
+    parent_text = _extract_parent_text_from_link(link)
+    if parent_text:
+        candidates.append(parent_text)
     for text in candidates:
         match = re.search(r"(20\d{2}[\u5e74\-/.]\d{1,2}[\u6708\-/.]\d{1,2}(?:\u65e5)?)", text)
         if match:
@@ -413,13 +421,14 @@ def crawl_physics(doc, _base_images_dir):
             for link in links:
                 title = ((link.text or "").strip() or (link.get_attribute("title") or "").strip())
                 href = (link.get_attribute("href") or "").strip()
+                parent_text = _extract_parent_text_from_link(link)
                 list_date = _extract_list_date_from_link(link)
                 if not href:
                     continue
                 if href in seen_urls:
                     log_filter_decision(section="physics", title=title, status="dropped", reason="duplicate_url", stage="crawler_physics", date=list_date, url=href)
                     continue
-                if not _looks_like_report(title):
+                if not _looks_like_report(title, parent_text, href):
                     log_filter_decision(section="physics", title=title, status="dropped", reason="not_report_like", stage="crawler_physics", date=list_date, url=href)
                     continue
                 log_filter_decision(section="physics", title=title, status="found", reason="list_item", stage="crawler_physics", date=list_date, url=href)
