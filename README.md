@@ -53,130 +53,36 @@ bash scripts/setup_macos.sh
 source .venv/bin/activate
 ```
 
-macOS 默认使用 `chrome`，Windows 默认使用 `edge`。如需切换浏览器，在 `.env` 中设置 `WANYOU_SELENIUM_BROWSER` 为 `chrome`、`edge` 或 `safari`。
+### 快速开始
 
-### 环境变量
-
-项目会在启动时自动读取项目根目录的 `.env` 文件，Windows 和 macOS 都不需要再手动 `export` 或写入用户级环境变量。修改 key 时，只要改 `.env`，下一次运行命令就会自动使用新值。
-
-| 变量 | 用途 |
-| --- | --- |
-| `DEEPSEEK_API_KEY` | DeepSeek / LLM API key |
-| `WECHAT_PUBLIC_API_KEY` | 公众号文章抓取 API key，来自 `down.mptext.top` |
-| `MYHOME_IMAGE_OCR_SPACE_URL` | 家园网本地图片 OCR 接口，默认 `https://api.ocr.space/parse/image` |
-| `WECHAT_OCR_SPACE_URL` | 公众号公开图片 URL OCR 接口，默认 `https://api.ocr.space/parse/imageurl` |
-| `WECHAT_MP_APPID` | 微信公众号官方后台 AppID，用于预留的公众号草稿箱接口 |
-| `WECHAT_MP_APPSECRET` | 微信公众号官方后台 AppSecret，用于预留的公众号草稿箱接口 |
-| `WANYOU_SELENIUM_BROWSER` | Selenium 浏览器，可选 `chrome`、`edge`、`safari` |
-
-关于读取正文图片信息的变量有：
-
-| 变量 | 用途 |
-| --- | --- |
-| `RAW_COLLECTION_KEEP_IMAGES` | raw/ranked raw 阶段保留并下载正文图片，默认开启 |
-| `MYHOME_IMAGE_OCR_KEEP_IMAGE` | 家园网图片 OCR 后保留原图，默认开启 |
-| `IMAGE_LLM_PROVIDER` | 识图大模型 provider，可选 `openai`、`gemini` 等 |
-| `IMAGE_LLM_BASE_URL` | 识图大模型 OpenAI/Gemini 兼容接口地址 |
-| `IMAGE_LLM_MODEL` | 识图大模型名称 |
-| `IMAGE_LLM_API_KEY_ENV` | 识图大模型读取哪个 API key 变量 |
-| `OCR_VISION_LLM_ENABLED` | 是否启用识图大模型 OCR |
-| `OCR_VISION_LLM_MODE` | 识图 OCR 模式：`fallback`、`prefer` 或 `only` |
-| `OCR_VISION_LLM_PROVIDER` | OCR 识图模型 provider，例如 `zhipuai` |
-| `OCR_VISION_LLM_MODEL` | OCR 识图模型名称，例如 `glm-4v-flash` |
-| `OCR_VISION_LLM_API_KEY_ENV` | OCR 识图模型读取哪个 API key 变量 |
-| `XIUMI_HOME_URL` | 秀米“我的秀米/工作台”入口，登录确认后从这里新建图文 |
-| `XIUMI_IMAGE_MODE` | 秀米正文图片处理：`upload`、`auto`、`inline` 或 `omit` |
-| `XIUMI_MAX_INLINE_IMAGE_HTML_CHARS` | `auto` 模式下允许内联图片后的最大正文体积 |
-| `XIUMI_IMAGE_UPLOAD_MAX_FAILURES` | 开头连续几张图片拿不到秀米素材 URL 后判定上传链路异常并降级 |
-| `XIUMI_IMAGE_UPLOAD_RETRIES` | 单张图片上传失败后的轻量重试次数 |
-| `XIUMI_IMAGE_UPLOAD_BATCH_SIZE` | 秀米图库批量上传每组图片数量；设为 `1` 可回到逐张上传 |
-| `XIUMI_IMAGE_UPLOAD_STALL_SECONDS` | 上传状态长时间没有变化时的卡死保护，不作为正常推进依据 |
-
-创建本地 `.env`：
+项目在启动时自动读取项目根目录的 `.env`，无需手动 `export`。
 
 ```bash
 cp .env.example .env
 ```
 
-然后编辑 `.env`，取消需要的行的注释并填入真实值：
+核心配置：
+
+| 变量 | 必需 | 用途 |
+| --- | --- | --- |
+| `DEEPSEEK_API_KEY` | **是** | LLM API key |
+| `WANYOU_USERNAME` | 登录时需要 | 统一身份认证用户名（清华学号） |
+| `WANYOU_PASSWORD` | 登录时需要 | 统一身份认证密码 |
+| `OCR_SPACE_API_KEY` | OCR 时需要 | 图片文字识别 API key |
+| `WECHAT_PUBLIC_API_KEY` | 抓取公众号时需要 | 公众号文章 API key，来自 `down.mptext.top` |
+| `WANYOU_SELENIUM_BROWSER` | 否 | 浏览器：macOS 默认 `chrome`，Windows 默认 `edge`，也支持`safari` |
+
+`cp .env.example .env` 后编辑填入 key 即可运行：
 
 ```bash
-# DeepSeek / LLM API key
-DEEPSEEK_API_KEY="your-deepseek-api-key"
+# 公开来源（免登录）烟测
+python skills/wanyou-full-run/scripts/run_wanyou_full_run.py --public-only --skip-docx
 
-# 公众号文章抓取 API key，来自 down.mptext.top
-WECHAT_PUBLIC_API_KEY="your-public-api-key"
-
-# OCR.Space API key：家园网图片通知、公众号图片文字识别会读取它
-OCR_SPACE_API_KEY="your-ocr-api-key"
-
-# OCR 接口：本地下载图片用 /parse/image，公网图片 URL 用 /parse/imageurl
-MYHOME_IMAGE_OCR_SPACE_URL="https://api.ocr.space/parse/image"
-WECHAT_OCR_SPACE_URL="https://api.ocr.space/parse/imageurl"
-
-# 公众号官方后台 AppID，只有直接保存到公众号草稿箱时需要
-WECHAT_MP_APPID="your-official-account-appid"
-
-# 公众号官方后台 AppSecret，只有直接保存到公众号草稿箱时需要
-WECHAT_MP_APPSECRET="your-official-account-appsecret"
-
-# Selenium 浏览器：macOS 推荐 chrome；Windows 默认 edge；Safari 需先开启远程自动化
-WANYOU_SELENIUM_BROWSER="chrome"
-
-# raw/ranked raw 阶段保留并下载正文图片；正文为图片的通知依赖这个开关
-RAW_COLLECTION_KEEP_IMAGES="1"
-
-# 家园网图片 OCR 后仍保留原图
-MYHOME_IMAGE_OCR_KEEP_IMAGE="1"
-
-# 识图大模型：当前用于公众号图片类型判断，也作为后续图片理解接口预留
-IMAGE_LLM_PROVIDER="openai"
-IMAGE_LLM_BASE_URL="https://api.openai.com/v1"
-IMAGE_LLM_MODEL="gpt-4o-mini"
-IMAGE_LLM_API_KEY_ENV="OPENAI_API_KEY"
-OPENAI_API_KEY="your-vision-model-api-key"
-WECHAT_IMAGE_LLM_ENABLED="1"
-
-# 识图大模型 OCR：可作为 OCR.Space 的兜底、优先引擎或唯一引擎
-# fallback = OCR.Space 失败后调用识图模型；prefer = 优先识图模型；only = 只用识图模型
-OCR_VISION_LLM_ENABLED="1"
-OCR_VISION_LLM_MODE="fallback"
-OCR_VISION_LLM_PROVIDER="zhipuai"
-OCR_VISION_LLM_BASE_URL="https://open.bigmodel.cn/api/paas/v4"
-OCR_VISION_LLM_MODEL="glm-4v-flash"
-OCR_VISION_LLM_API_KEY_ENV="ZHIPUAI_API_KEY"
-ZHIPUAI_API_KEY="your-glm-api-key"
-
-# 秀米图片处理：upload 会走“我的图库/上传图片”拿素材 URL；inline 会转 base64；omit 会省略正文图片
-XIUMI_HOME_URL="https://xiumi.us/studio/v5?lang=zh_CN#/"
-XIUMI_IMAGE_MODE="upload"
-XIUMI_MAX_INLINE_IMAGE_HTML_CHARS="900000"
-XIUMI_IMAGE_UPLOAD_MAX_FAILURES="3"
-XIUMI_IMAGE_UPLOAD_RETRIES="1"
-XIUMI_IMAGE_UPLOAD_BATCH_SIZE="6"
-XIUMI_IMAGE_UPLOAD_STALL_SECONDS="180"
+# 完整运行（含统一身份认证）
+python skills/wanyou-full-run/scripts/run_wanyou_full_run.py --with-login --skip-docx
 ```
 
-Windows PowerShell 可以用记事本编辑：
-
-```powershell
-copy .env.example .env
-notepad .env
-```
-
-`.env` 不会提交到 Git。
-
-需要临时使用另一个 env 文件时：
-
-```bash
-WANYOU_ENV_FILE=config/local.env python skills/wanyou-full-run/scripts/run_wanyou_full_run.py --public-only --skip-docx
-```
-
-默认情况下 `.env` 会覆盖当前终端里已有的同名变量。如果希望系统环境变量优先，可以在 `.env` 中写：
-
-```bash
-WANYOU_DOTENV_OVERRIDE="0"
-```
+完整环境变量参考见[高级调试→环境变量参考](#环境变量参考)。`.env` 不会提交到 Git。
 
 ### Safari
 
@@ -356,17 +262,74 @@ python skills/wanyou-full-run/scripts/run_wanyou_full_run.py --with-login --rank
 - `output/<timestamp>/debug/filter_decisions_summary.json`：筛选汇总。
 - `output/<timestamp>/debug/*.html` / `*.txt`：登录、页面结构和选择器快照。
 
-DeepSeek 兼容网关或自定义模型可通过环境变量覆盖：
-
-```bash
-# 写入 .env
-DEEPSEEK_API_KEY="your-deepseek-api-key"
-LLM_BASE_URL="https://your-compatible-endpoint/v1"
-LLM_API_KEY_ENV="DEEPSEEK_API_KEY"
-```
-
 公众号抓取常见错误：
 
 - `ret=-1`：API 认证失败，检查 `WECHAT_PUBLIC_API_KEY`。
 - `ret=401` / `ret=403`：API 无权限或 key 权限不足。
 - `ret=200003` / `invalid session`：API 会话无效或过期，需要更新 key/session。
+
+### 环境变量参考
+
+#### 正文图片与 OCR
+
+| 变量 | 用途 |
+| --- | --- |
+| `RAW_COLLECTION_KEEP_IMAGES` | raw/ranked raw 阶段保留并下载正文图片，默认开启 |
+| `MYHOME_IMAGE_OCR_ENABLED` | 家园网图片启用 OCR 文字识别，默认开启 |
+| `MYHOME_IMAGE_OCR_KEEP_IMAGE` | 家园网图片 OCR 后保留原图，默认开启 |
+| `MYHOME_IMAGE_OCR_API_KEY_ENV` | 家园网 OCR 读取哪个 API key 变量，默认 `OCR_SPACE_API_KEY` |
+| `MYHOME_IMAGE_OCR_SPACE_URL` | 家园网 OCR 接口地址，默认 `https://api.ocr.space/parse/image` |
+| `WECHAT_OCR_SPACE_URL` | 公众号公开图片 URL OCR 接口，默认 `https://api.ocr.space/parse/imageurl` |
+| `IMAGE_LLM_PROVIDER` | 识图大模型 provider，可选 `openai`、`gemini` 等 |
+| `IMAGE_LLM_BASE_URL` | 识图大模型兼容接口地址 |
+| `IMAGE_LLM_MODEL` | 识图大模型名称 |
+| `IMAGE_LLM_API_KEY_ENV` | 识图大模型读取哪个 API key 变量 |
+| `OPENAI_API_KEY` | 识图大模型 API key（当 `IMAGE_LLM_API_KEY_ENV=OPENAI_API_KEY` 时使用） |
+| `WECHAT_IMAGE_LLM_ENABLED` | 公众号图片是否使用识图大模型判断图片类型，默认开启 |
+| `OCR_VISION_LLM_ENABLED` | 是否启用识图大模型 OCR |
+| `OCR_VISION_LLM_MODE` | 识图 OCR 模式：`fallback`（OCR.Space 兜底）、`prefer`（优先）或 `only`（唯一） |
+| `OCR_VISION_LLM_PROVIDER` | OCR 识图模型 provider，例如 `zhipuai` |
+| `OCR_VISION_LLM_BASE_URL` | OCR 识图模型兼容接口地址 |
+| `OCR_VISION_LLM_MODEL` | OCR 识图模型名称，例如 `glm-4v-flash` |
+| `OCR_VISION_LLM_API_KEY_ENV` | OCR 识图模型读取哪个 API key 变量 |
+
+#### 秀米草稿
+
+| 变量 | 用途 |
+| --- | --- |
+| `XIUMI_HOME_URL` | 秀米"我的秀米/工作台"入口，默认 `https://xiumi.us/studio/v5?lang=zh_CN#/` |
+| `XIUMI_IMAGE_MODE` | 正文图片处理：`upload`（推荐）、`auto`、`inline` 或 `omit` |
+| `XIUMI_MAX_INLINE_IMAGE_HTML_CHARS` | `auto` 模式下允许内联图片后的最大正文体积，默认 `900000` |
+| `XIUMI_IMAGE_UPLOAD_MAX_FAILURES` | 开头连续几张图片拿不到秀米素材 URL 后判定上传链路异常并降级，默认 `3` |
+| `XIUMI_IMAGE_UPLOAD_RETRIES` | 单张图片上传失败后的轻量重试次数，默认 `2` |
+| `XIUMI_IMAGE_UPLOAD_BATCH_SIZE` | 秀米图库批量上传每组图片数量，默认 `6` |
+| `XIUMI_IMAGE_UPLOAD_STALL_SECONDS` | 上传状态长时间无变化时的卡死保护，默认 `180` |
+
+#### LLM 模型配置
+
+| 变量 | 用途 |
+| --- | --- |
+| `LLM_PROVIDER` | LLM provider，可选 `deepseek`、`openai`、`zhipuai`、`gemini`，默认 `deepseek` |
+| `LLM_MODEL` | 全局默认 LLM 模型，默认 `deepseek-v4-flash` |
+| `LLM_BASE_URL` | LLM 兼容接口地址 |
+| `LLM_API_KEY_ENV` | 全局 LLM 读取哪个 API key 变量（各 provider 有各自的默认 key 变量） |
+| `FINAL_MARKDOWN_LLM_CLEAN_ENABLED` | 最终 Markdown 是否经 LLM 清洗排版，默认开启 |
+
+各步骤可使用独立模型覆盖全局 `LLM_MODEL`，不设置时回退到 `LLM_MODEL`：
+
+| 变量 | 用途 |
+| --- | --- |
+| `DECIDER_LLM_MODEL` | 信息是否值得保留的决策模型 |
+| `WECHAT_SUMMARY_LLM_MODEL` | 公众号文章摘要模型 |
+| `PHYSICS_EXTRACT_LLM_MODEL` | 物理系学术报告信息提取模型 |
+| `RAW_RANKING_LLM_MODEL` | 原始信息重要性排序模型 |
+| `SYNTHESIS_LLM_MODEL` | 最终万有预报合成模型 |
+| `MARKDOWN_CLEAN_LLM_MODEL` | 正文 Markdown 清洗模型 |
+
+#### 运行行为控制
+
+| 变量 | 用途 |
+| --- | --- |
+| `WANYOU_DOTENV_OVERRIDE` | 设为 `0` 时系统环境变量优先于 `.env`，默认覆盖 |
+| `WANYOU_ENV_FILE` | 指定其他 env 文件路径 |
+| `WANYOU_RUN_DATE` | 模拟某一天的日期（`YYYY-MM-DD`），仅影响时效筛选 |
