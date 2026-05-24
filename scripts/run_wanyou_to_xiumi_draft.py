@@ -1,6 +1,7 @@
 import argparse
 import os
 import pathlib
+import re
 import sys
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -9,6 +10,37 @@ if str(ROOT) not in sys.path:
 
 from main import run_pipeline
 from scripts.publish_xiumi_draft import publish_xiumi_draft
+
+
+def _extract_top_ranked_title(ranked_raw_path: str) -> str:
+    """Return the title of the highest-scored item across all sections in ranked raw markdown."""
+    try:
+        text = pathlib.Path(ranked_raw_path).read_text(encoding="utf-8")
+    except Exception:
+        return ""
+
+    best_title = ""
+    best_score = -1
+    current_title = ""
+    current_score = -1
+
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("## "):
+            if current_score > best_score and current_title and current_title != "占位卡片":
+                best_score = current_score
+                best_title = current_title
+            current_title = stripped[3:].strip()
+            current_score = -1
+        elif stripped.startswith("重要性评分:"):
+            match = re.match(r"重要性评分:\s*(\d{1,3})/100", stripped)
+            if match:
+                current_score = int(match.group(1))
+
+    if current_score > best_score and current_title and current_title != "占位卡片":
+        best_title = current_title
+
+    return best_title
 
 
 def _configure_console():
@@ -76,6 +108,12 @@ def main():
     final_markdown_path = str(result.get("final_markdown_path") or "").strip()
     if not html_path:
         raise SystemExit("HTML output path is empty. Re-run without --skip-html.")
+
+    if not args.title:
+        ranked_raw_path = str(result.get("ranked_raw_path") or "")
+        top_title = _extract_top_ranked_title(ranked_raw_path)
+        if top_title:
+            args.title = f"万有预报 | {top_title}"
 
     print("[2/2] Sending content to Xiumi draft editor...")
     xiumi_result = publish_xiumi_draft(
