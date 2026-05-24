@@ -137,6 +137,12 @@ python scripts/run_wanyou_to_xiumi_draft.py --with-login --skip-docx
 python scripts/publish_xiumi_draft.py output/xxx/wanyou_xxx.html --markdown output/xxx/wanyou_xxx.md --title "万有预报"
 ```
 
+使用最新一次生成的 `.html + .md` 保存到秀米草稿：
+
+```bash
+LATEST=$(ls -td --color=never output/20*/ | head -1) && python scripts/publish_xiumi_draft.py ${LATEST}wanyou_*.html --markdown ${LATEST}wanyou_$(basename ${LATEST%/}).md --title "万有预报"
+```
+
 只填充秀米、不点击保存：
 
 ```bash

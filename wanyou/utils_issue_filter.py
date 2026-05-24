@@ -26,7 +26,7 @@ def parse_datetime_text(text: str) -> Optional[dt.datetime]:
         return None
 
     year_first = re.search(
-        r"(20\d{2})[年\-/.](\d{1,2})[月\-/.](\d{1,2})(?:日)?(?:\s+(\d{1,2})[:：](\d{2}))?",
+        r"(20\d{2})[年\-/.](\d{1,2})[月\-/.](\d{1,2})(?:[日号])?(?:\s+(\d{1,2})[:：](\d{2}))?",
         raw,
     )
     if year_first:
@@ -39,7 +39,7 @@ def parse_datetime_text(text: str) -> Optional[dt.datetime]:
         )
 
     month_day = re.search(
-        r"(\d{1,2})月(\d{1,2})日(?:\s*(\d{1,2})[:：](\d{2}))?",
+        r"(\d{1,2})月(\d{1,2})[日号](?:\s*(\d{1,2})[:：](\d{2}))?",
         raw,
     )
     if month_day:

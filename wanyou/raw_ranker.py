@@ -135,7 +135,7 @@ def _summarize_tendency_examples(section_text: str) -> str:
 def _all_detected_dates_before_run(text: str) -> bool:
     dates = []
     for pattern in (
-        r"20\d{2}[年\-/.]\d{1,2}[月\-/.]\d{1,2}(?:日)?(?:\s*\d{1,2}[:：]\d{2})?",
+        r"20\d{2}[年\-/.]\d{1,2}[月\-/.]\d{1,2}(?:[日号])?(?:\s*\d{1,2}[:：]\d{2})?",
         r"\d{1,2}月\d{1,2}日(?:\s*\d{1,2}[:：]\d{2})?",
     ):
         for match in re.finditer(pattern, text or ""):
@@ -150,7 +150,7 @@ def _all_detected_dates_before_run(text: str) -> bool:
 
 def _has_current_or_future_date(text: str) -> bool:
     for pattern in (
-        r"20\d{2}[年\-/.]\d{1,2}[月\-/.]\d{1,2}(?:日)?(?:\s*\d{1,2}[:：]\d{2})?",
+        r"20\d{2}[年\-/.]\d{1,2}[月\-/.]\d{1,2}(?:[日号])?(?:\s*\d{1,2}[:：]\d{2})?",
         r"\d{1,2}月\d{1,2}日(?:\s*\d{1,2}[:：]\d{2})?",
     ):
         for match in re.finditer(pattern, text or ""):
@@ -230,8 +230,9 @@ def _apply_score_guardrails(section_name: str, item: dict, score: int, reason: s
         tags.append("cap_non_undergrad")
 
     if section_name == "物理系学术报告" or re.search(r"物理系学术报告|学术报告|colloquium|seminar", title, re.I):
-        adjusted = max(adjusted, 80)
-        tags.append("floor_physics_report")
+        if adjusted > 0:
+            adjusted = max(adjusted, 80)
+            tags.append("floor_physics_report")
     if (
         not is_publicity_like
         and not is_showcase_like
@@ -241,15 +242,16 @@ def _apply_score_guardrails(section_name: str, item: dict, score: int, reason: s
         head_text,
         re.I,
         )
+        and adjusted > 0
     ):
         adjusted = max(adjusted, 55)
         tags.append("floor_actionable_training")
-    if re.search(r"宿舍|熄灯|交通|通行|第二成绩单|志愿工时|献血", head_text, re.I):
+    if re.search(r"宿舍|熄灯|交通|通行|第二成绩单|志愿工时|献血", head_text, re.I) and adjusted > 0:
         adjusted = max(adjusted, 45)
         tags.append("floor_life_impact")
 
     if section_name == "图书馆信息":
-        if re.search(r"开馆|闭馆|考试周|阅览室|座位|预约|借还|数据库访问|校外访问|资源访问|服务调整|系统维护", text, re.I):
+        if re.search(r"开馆|闭馆|考试周|阅览室|座位|预约|借还|数据库访问|校外访问|资源访问|服务调整|系统维护", text, re.I) and adjusted > 0:
             adjusted = max(adjusted, 90)
             tags.append("floor_lib_service_impact")
         if re.search(r"知识产权|专利|金融|经济|WRDS|Capital IQ|医药|许可|商业|会计", text, re.I):
@@ -296,8 +298,9 @@ def _score_section_items(section_name: str, items: List[dict]) -> Dict[str, dict
     system_prompt = (
         "你在为清华大学物理系本科生整理《万有预报》 raw 全量信息。"
         + f"当前运行日期是 {effective_run_date().isoformat()}。"
-        + "请先据此判断活动、报名、影响时间是否已经过去；过期条目要明显降权，但仍应保留低分区间内的相对排序，不要把所有低分项目都压成同一个分数。"
-        + "人工评分样例中的非零分代表该信息的基准偏好；如果候选条目已经过期，应在这个基准上降权，同时保持专利/金融/医药、文献工具、LaTeX/Word 等类别之间的相对差异。仍在当前或未来生效的长期通知可以保留高分。"
+        + "请先据此判断活动、报名、影响时间是否已经过去。"
+        + "过期条目（活动已结束、报名已截止、影响时间已过）一律评 0 分，不需要再做细粒度区分。"
+        + "仍在当前或未来生效的长期通知可以保留高分。"
         + "不要删除任何条目，只需为每条信息按对物理系本科生的重要性打 0-100 分。"
         + KEEP_DROP_PREFERENCE_RULES
         + RAW_RANKING_SCORE_GUIDE
@@ -306,7 +309,7 @@ def _score_section_items(section_name: str, items: List[dict]) -> Dict[str, dict
         + "你的分数应尽量贴近真实物理系本科生的信息获取偏好，而不是平均意义上的校园资讯热度。"
         + "如果同一条内容在 tendency.md 一类训练样本中会被认为偏低分，就不要因为文案热闹或发布者知名而抬高分数。"
         + "如果当前版块给出了人工评分样例，必须优先对齐样例中的“物理系本科生偏好评分”，不要沿用泛校园资讯的重要性评分。"
-        + "图书馆信息尤其要区分：开馆、考试周、自习座位、资源访问和服务调整等基础设施通知可高分；一般专利、金融、医药、数据库、文献工具或论文工具讲座通常低分。过期活动应降到低分区，但仍要参照 tendency.md 示例给低分项目排序。"
+        + "图书馆信息尤其要区分：开馆、考试周、自习座位、资源访问和服务调整等基础设施通知可高分；一般专利、金融、医药、数据库、文献工具或论文工具讲座通常低分。过期活动直接评 0 分。"
         + "先在心里判断它属于哪一档：高优先、中优先、低优先、极低优先，再从对应分段内给分，避免分数漂移。"
         + "请在 reason 中明确说明给分的核心依据，例如：课业影响、科研训练价值、物理相关性、是否处于报名/决赛/结果阶段、是否只对研究生有效、是否只是一般宣传。"
         + 'JSON 输出格式：{"items":[{"index":1,"score":80,"band":"high","reason":"..."}]}。'
@@ -323,6 +326,7 @@ def _score_section_items(section_name: str, items: List[dict]) -> Dict[str, dict
         user_prompt,
         model=getattr(config, "RAW_RANKING_LLM_MODEL", "") or None,
         max_tokens=max(5000, min(8000, 900 * len(items))),
+        timeout_seconds=90,
         temperature=0,
         task_label=f"正在为 raw 条目打分排序：{section_name}",
     )
@@ -441,7 +445,8 @@ def build_selected_raw_markdown_from_ranked(
 
         parts = [f"# {section_name}", ""]
         for score, _index, title, content in ranked_items[:limit]:
-            _ = score
+            if score <= 0:
+                continue
             parts.append(f"## {title}")
             parts.append("")
             if content:
