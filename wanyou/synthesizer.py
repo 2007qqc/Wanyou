@@ -1,4 +1,4 @@
-﻿import datetime as dt
+import datetime as dt
 import os
 import re
 from pathlib import Path

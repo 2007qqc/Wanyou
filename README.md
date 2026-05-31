@@ -125,7 +125,7 @@ python skills/wanyou-full-run/scripts/run_wanyou_full_run.py --with-login --rank
 python skills/wanyou-full-run/scripts/run_wanyou_full_run.py --with-login --todo-richtext --skip-docx
 ```
 
-从零生成并保存到秀米草稿：
+从零生成并保存到秀米草稿（标题自动取 `万有预报 | {最高分条目标题}`，也可 `--title` 手动指定）：
 
 ```bash
 python scripts/run_wanyou_to_xiumi_draft.py --with-login --skip-docx
@@ -153,7 +153,7 @@ python scripts/publish_xiumi_draft.py output/xxx/wanyou_xxx.html --markdown outp
 
 秀米保存流程会：
 
-- 先打开“我的秀米/工作台”并确认登录状态；如果未登录，等待用户登录，登录成功后自动继续
+- 先打开”我的秀米/工作台”并确认登录状态；如果未登录，浏览器会直接暴露给用户在页面完成登录，登录后回终端按回车继续
 - 从“我的秀米”页面点击新建图文，不在登录前直接打开 `paper/for/new`
 - 优先读取 Markdown，转换为适合秀米的富文本 HTML
 - 按“文字 -> 图片 -> 排版”的顺序写入：先写入正文文字和图片占位，避免登录或图库操作打断正文；再打开“我的图库/上传图片(无水印)”上传正文图片，按原始 HTML 图片顺序匹配秀米素材 URL；最后把图片 URL 回填到 HTML 中并重新应用正文排版

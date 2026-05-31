@@ -93,6 +93,102 @@ def _image_file_to_data_url(path: pathlib.Path) -> str:
     return f"data:{mime_type};base64,{data}"
 
 
+def _apply_xiumi_base_format(html_text: str) -> str:
+    """Post-process Xiumi content HTML to align with the base format defined in format.md.
+
+    format.md specifies:
+      - title:  h1 tag, font-size 18px
+      - paragraph: font-size 14px, line-height 1.6, letter-spacing 0,
+                   margin-left 0, margin-right 0
+    """
+
+    def _fix_h1_style(match):
+        before_attrs = match.group(1)
+        style = match.group(2)
+        after_attrs = match.group(3)
+        style = re.sub(r"font-size:\s*\d+px", "font-size:18px", style)
+        return f"<h1{before_attrs}style=\"{style}\"{after_attrs}>"
+
+    def _fix_p_style(match):
+        before_attrs = match.group(1)
+        style = match.group(2)
+        after_attrs = match.group(3)
+
+        # Split into individual CSS declarations and process each
+        raw_decls = [d.strip() for d in style.split(";") if d.strip()]
+        new_decls = []
+        margin_top = margin_bottom = None
+        seen_font_size = seen_line_height = seen_letter_spacing = False
+
+        for decl in raw_decls:
+            if ":" not in decl:
+                new_decls.append(decl)
+                continue
+            name, value = decl.split(":", 1)
+            name = name.strip()
+            value = value.strip()
+
+            if name == "font-size":
+                value = "14px"
+                seen_font_size = True
+            elif name == "line-height":
+                value = "1.6"
+                seen_line_height = True
+            elif name == "letter-spacing":
+                value = "0px"
+                seen_letter_spacing = True
+            elif name == "margin-left":
+                value = "0px"
+            elif name == "margin-right":
+                value = "0px"
+            elif name == "margin":
+                parts = value.split()
+                n = len(parts)
+                if n == 1:
+                    margin_top = margin_bottom = parts[0]
+                elif n == 2:
+                    margin_top = margin_bottom = parts[0]
+                elif n == 3:
+                    margin_top = parts[0]
+                    margin_bottom = parts[2]
+                elif n >= 4:
+                    margin_top = parts[0]
+                    margin_bottom = parts[2]
+                # Decompose shorthand → explicit longhands so we can
+                # enforce margin-left/right = 0 while preserving top/bottom.
+                continue  # skip the shorthand itself
+
+            new_decls.append(f"{name}:{value}")
+
+        # Always emit the base-format paragraph properties
+        if not seen_font_size:
+            new_decls.append("font-size:14px")
+        if not seen_line_height:
+            new_decls.append("line-height:1.6")
+        if not seen_letter_spacing:
+            new_decls.append("letter-spacing:0px")
+        if margin_top is not None:
+            new_decls.append(f"margin-top:{margin_top}")
+            new_decls.append(f"margin-bottom:{margin_bottom or margin_top}")
+        new_decls.append("margin-left:0px")
+        new_decls.append("margin-right:0px")
+
+        new_style = ";".join(new_decls)
+        return f"<p{before_attrs}style=\"{new_style}\"{after_attrs}>"
+
+    html_text = re.sub(
+        r"<h1\b([^>]*?)style=\"([^\"]*)\"([^>]*)>",
+        _fix_h1_style,
+        html_text,
+    )
+    html_text = re.sub(
+        r"<p\b([^>]*?)style=\"([^\"]*)\"([^>]*)>",
+        _fix_p_style,
+        html_text,
+    )
+    return html_text
+
+
 def _inline_local_images(html_text: str, asset_base_path: pathlib.Path) -> str:
     def repl(match):
         quote = match.group(1)
@@ -400,7 +496,26 @@ def _wait_for_manual_login(browser, timeout: int):
         except Exception:
             pass
 
-    print("秀米：请在打开的浏览器中完成登录。程序会自动检测登录状态并继续，无需回终端按回车。")
+    is_interactive = getattr(sys.stdin, "isatty", lambda: False)()
+
+    if is_interactive:
+        try:
+            browser.execute_script("window.focus();")
+        except Exception:
+            pass
+        print("秀米：浏览器已打开登录页面，请在浏览器中完成登录。")
+        print("秀米：登录完成后回到终端按回车继续 —— 程序会验证登录状态后自动执行后续步骤。")
+        try:
+            input()
+        except EOFError:
+            pass
+        state = _xiumi_login_state(browser)
+        if state.get("authenticated"):
+            _log_xiumi_debug("xiumi_manual_login_confirmed", state=state)
+            return True
+        print("秀米：未检测到登录状态，继续等待自动检测...")
+
+    print("秀米：正在自动检测登录状态，请在浏览器中完成登录。")
     deadline = time.time() + timeout
     while time.time() < deadline:
         state = _xiumi_login_state(browser)
@@ -2100,6 +2215,7 @@ def publish_xiumi_draft(
         raise FileNotFoundError(f"HTML 文件不存在: {html_path_obj}")
 
     content_html, asset_base_path = _resolve_content_paths(html_path_obj, markdown)
+    content_html = _apply_xiumi_base_format(content_html)
     content_html = _prepare_xiumi_images(content_html, asset_base_path)
 
     markdown_path = pathlib.Path(markdown).resolve() if markdown else html_path_obj.with_suffix(".md")

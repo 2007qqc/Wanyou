@@ -1,4 +1,4 @@
-﻿import html as html_lib
+import html as html_lib
 import os
 import re
 from urllib.parse import urljoin, urlparse

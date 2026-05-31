@@ -1,4 +1,4 @@
-﻿from typing import Optional
+from typing import Optional
 
 import config
 from wanyou.prompt_preferences import KEEP_DROP_PREFERENCE_RULES

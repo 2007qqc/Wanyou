@@ -1,4 +1,4 @@
-﻿import json
+import json
 import re
 from html.parser import HTMLParser
 from urllib.parse import urljoin

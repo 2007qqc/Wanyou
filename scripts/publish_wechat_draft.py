@@ -1,4 +1,4 @@
-﻿import argparse
+import argparse
 import html
 import json
 import mimetypes
