@@ -80,11 +80,17 @@ def _run_public_module(module: str, doc, images_dir: str):
 
 
 def _run_login_modules(modules: list[str], doc, images_dir: str):
-    credentials = prompt_credentials()
-    info_credentials = credentials.get("info", {})
-    myhome_credentials = credentials.get("myhome", {})
-    username = info_credentials.get("username") or myhome_credentials.get("username", "")
-    password = info_credentials.get("password") or myhome_credentials.get("password", "")
+    env_username = os.environ.get("WANYOU_USERNAME", "").strip()
+    env_password = os.environ.get("WANYOU_PASSWORD", "").strip()
+    if env_username and env_password:
+        username = env_username
+        password = env_password
+    else:
+        credentials = prompt_credentials()
+        info_credentials = credentials.get("info", {})
+        myhome_credentials = credentials.get("myhome", {})
+        username = info_credentials.get("username") or myhome_credentials.get("username", "")
+        password = info_credentials.get("password") or myhome_credentials.get("password", "")
     browser = authenticate_shared_browser(
         username,
         password,

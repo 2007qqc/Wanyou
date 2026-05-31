@@ -40,7 +40,18 @@ def _masked_password_prompt(prompt_text):
         sys.stdout.flush()
 
 
+import os
+
+
 def prompt_credentials():
+    env_username = os.environ.get("WANYOU_USERNAME", "").strip()
+    env_password = os.environ.get("WANYOU_PASSWORD", "").strip()
+    if env_username and env_password:
+        return {
+            "info": {"username": env_username, "password": env_password},
+            "myhome": {"username": env_username, "password": env_password},
+        }
+
     print("\n[统一身份认证] 教务通知和家园网默认复用同一套清华账号")
     username = input("用户名: ").strip()
     password = _masked_password_prompt("密码: ").strip()
