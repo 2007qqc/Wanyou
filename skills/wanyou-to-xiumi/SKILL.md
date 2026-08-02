@@ -97,6 +97,49 @@ XIUMI_IMAGE_MODE=upload
 XIUMI_MAX_INLINE_IMAGE_HTML_CHARS=900000
 ```
 
+## Xiumi Editor Publish Pitfalls (2026-08, verified against real drafts)
+
+These behaviors were confirmed with real drafts. Read before touching editor-write logic in `scripts/publish_xiumi_draft.py`.
+
+### Direct innerHTML injection saves but never renders → empty draft
+
+- The Xiumi editor is an Angular app. The rendering layer is `comps.items`; content injected via `innerHTML=` or `scope.cell.text=` lands in `_qiBlock.items` (frozen layer — it saves but never renders).
+- Symptom: save reports success, the draft URL exists, but the body opens empty.
+- Fix: **trusted paste**. `navigator.clipboard.write([new ClipboardItem({'text/html': blob, 'text/plain': blob})])` → focus `[contenteditable]` → CDP `Input.dispatchKeyEvent` Ctrl+V (`modifiers:2, key:"v", code:"KeyV", windowsVirtualKeyCode:86`). This makes Xiumi's own paste handler build rendering-layer components under `comps.items`.
+- Verify: open the draft and check the `/data/editing` response (or `output/parse_verify.py`) — rendered content must be in `comps.items`, not `_qiBlock`.
+
+### CDP prerequisites
+
+```python
+browser.execute_cdp_cmd("Browser.grantPermissions", {
+  "permissions": ["clipboardReadWrite", "clipboardSanitizedWrite"],
+  "origin": "https://xiumi.us"})
+browser.execute_cdp_cmd("Emulation.setFocusEmulationEnabled", {"enabled": True})
+```
+
+### Persistent-profile recover dialog blocks the editor
+
+The editor may pop a "上次没有保存到服务器，是否恢复?" dialog that blocks editing. It must be dismissed (click 取消/确定). Handled automatically by `_dismiss_xiumi_recover_dialog`.
+
+### Clear-then-paste is idempotent, but re-pasting identical content clears the draft
+
+- Clear = Ctrl+A + Delete, then re-paste; only the last content survives (verified).
+- Gotcha: when the HTML has no images, `final_html == text_first_html`, so the second clear+paste wipes the already-rendered content → empty draft. `_fill_xiumi_body_then_images` guards with `if final_html != text_first_html:` to skip the second paste.
+
+### Paste handler strips all inline styles
+
+- Only `text-align:justify` survives; `<h1>/<h2>/<h3>` map to semantic font-size 180%/140%/120%; adjacent blocks merge into ONE text component.
+- Custom colors/backgrounds/borders do NOT survive paste — they must be restyled manually in Xiumi (images are also inserted manually). Only heading hierarchy survives, via the promotion below.
+
+### Preserve heading hierarchy with `_promote_headings_for_xiumi`
+
+- Inline `font-size` on large `<p>` gets stripped. Promote large paragraphs to semantic tags first: size≥34→`<h1>`, ≥20→`<h2>`, ≥17+bold→`<h3>` (keeps `text-align`, adds `letter-spacing:2px` to h1/h2).
+- Pass `--no-base-format` to use heading promotion (default base formatting normalizes to 14px/18px and squashes custom large typography).
+
+### PowerShell env vars are not inherited
+
+The PowerShell tool does not inherit bash env vars — set `$env:WANYOU_SELENIUM_BROWSER='chrome'` in every command. Bash sandbox blocks win32 APIs; use PowerShell for win32 operations.
+
 ## Debug Rules
 
 - If the script fails before Xiumi, inspect the output directory for intermediate artifacts (`*_raw.md`, `*_ranked_raw.md`, `*_todo_selected_raw.md`, `*.md`, `*.html`).

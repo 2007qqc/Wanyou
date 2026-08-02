@@ -11,6 +11,7 @@ import tempfile
 import time
 import traceback
 
+from selenium.webdriver.common.action_chains import ActionChains
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 
@@ -331,6 +332,49 @@ def _prepare_xiumi_images(html_text: str, asset_base_path: pathlib.Path) -> str:
     return inlined
 
 
+def _promote_headings_for_xiumi(html_text: str) -> str:
+    """Turn large-font paragraphs into h1/h2/h3 so Xiumi keeps heading hierarchy.
+
+    Xiumi's paste handler strips inline font-size but maps h1/h2/h3 to
+    semantic font-size (180%/140%/120%). Without this, a 38px <p> title would
+    collapse to the default 16px after paste.
+    """
+
+    def repl(match):
+        before_attrs = match.group(1)
+        style = match.group(2)
+        after_attrs = match.group(3)
+        content = match.group(4)
+        size_m = re.search(r"font-size:\s*(\d+)px", style)
+        size = int(size_m.group(1)) if size_m else 0
+        align_m = re.search(r"text-align:\s*(center|left|right)", style)
+        align = align_m.group(1) if align_m else None
+        weight_m = re.search(r"font-weight:\s*(700|800|bold)", style)
+        bold = bool(weight_m)
+        if size >= 34:
+            tag = "h1"
+        elif size >= 20:
+            tag = "h2"
+        elif size >= 17 and bold:
+            tag = "h3"
+        else:
+            return match.group(0)
+        decls = []
+        if align:
+            decls.append("text-align:%s" % align)
+        if tag in ("h1", "h2"):
+            decls.append("letter-spacing:2px")
+        new_style = ";".join(decls)
+        return "<%s style=\"%s\"%s>%s</%s>" % (tag, new_style, after_attrs, content, tag)
+
+    return re.sub(
+        r"<p\b([^>]*?)style=\"([^\"]*)\"([^>]*)>([\s\S]*?)</p>",
+        repl,
+        html_text,
+        flags=re.I,
+    )
+
+
 def _first_heading(markdown_text: str) -> str:
     for line in (markdown_text or "").splitlines():
         stripped = line.strip()
@@ -602,6 +646,7 @@ def _open_xiumi_editor_from_my_xiumi(browser, home_url: str, login_timeout: int,
     if paper_state.get("clicked"):
         print("秀米：已进入图文排版")
         time.sleep(2)
+        _dismiss_xiumi_recover_dialog(browser)
         try:
             _wait_editor_ready(browser, 3)
             return
@@ -674,83 +719,132 @@ el.dispatchEvent(new Event('change', { bubbles: true }));
     )
 
 
-def _set_editor_html(browser, html_text: str):
-    state = browser.execute_script(
+def _xiumi_cdp_key_combo(browser, modifiers: int, key: str, code: str, vk: int):
+    browser.execute_cdp_cmd(
+        "Input.dispatchKeyEvent",
+        {"type": "keyDown", "modifiers": modifiers, "key": key, "code": code, "windowsVirtualKeyCode": vk},
+    )
+    browser.execute_cdp_cmd(
+        "Input.dispatchKeyEvent",
+        {"type": "keyUp", "modifiers": modifiers, "key": key, "code": code, "windowsVirtualKeyCode": vk},
+    )
+
+
+def _setup_xiumi_clipboard_cdp(browser):
+    """Grant clipboard + focus emulation so Ctrl+V via CDP performs a trusted paste.
+
+    Xiumi's real paste handler (Ctrl+V with a text/html clipboard) creates
+    rendering-layer components under comps.items; direct innerHTML injection
+    lands in _qiBlock and never renders after save.
+    """
+    try:
+        browser.execute_cdp_cmd(
+            "Browser.grantPermissions",
+            {"permissions": ["clipboardReadWrite", "clipboardSanitizedWrite"], "origin": "https://xiumi.us"},
+        )
+        browser.execute_cdp_cmd("Emulation.setFocusEmulationEnabled", {"enabled": True})
+        return True
+    except Exception as exc:
+        _log_xiumi_debug("xiumi_clipboard_cdp", error=str(exc))
+        return False
+
+
+def _dismiss_xiumi_recover_dialog(browser):
+    """Close the '上次没有保存到服务器，是否恢复？' dialog that a persistent profile may show."""
+    time.sleep(1.5)
+    dismiss = browser.execute_script(
         """
-const value = arguments[0];
-const editables = Array.from(document.querySelectorAll('[contenteditable="true"]'));
-function visible(el) {
-  const style = window.getComputedStyle(el);
-  const rect = el.getBoundingClientRect();
-  return style && style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0;
+function exactBtn(text) {
+  const els = Array.from(document.querySelectorAll('button, [ng-click], a, [class*="btn"]'));
+  return els.find(e => (e.textContent || '').trim() === text && e.offsetWidth > 0 && e.offsetHeight > 0) || null;
 }
-function scopeWithCell(el) {
-  if (!window.angular) return null;
-  let node = el;
-  while (node) {
-    try {
-      const scope = window.angular.element(node).scope();
-      if (scope && scope.cell) return scope;
-    } catch (e) {}
-    node = node.parentElement;
-  }
-  return null;
-}
-let chosen = null;
-let chosenScore = -1;
-let chosenIndex = -1;
-const diagnostics = [];
-for (let index = 0; index < editables.length; index += 1) {
-  const el = editables[index];
-  const rect = el.getBoundingClientRect();
-  const text = String(el.innerText || el.textContent || '');
-  const html = String(el.innerHTML || '');
-  const scope = scopeWithCell(el);
-  let score = 0;
-  if (visible(el)) score += 20;
-  if (scope) score += 80;
-  if (html.includes('data-wanyou-image-placeholder')) score += 120;
-  if (text.includes('万有预报')) score += 30;
-  score += Math.min(60, Math.round((rect.width * rect.height) / 30000));
-  diagnostics.push({
-    index,
-    score,
-    hasCellScope: !!scope,
-    hasPlaceholder: html.includes('data-wanyou-image-placeholder'),
-    width: Math.round(rect.width),
-    height: Math.round(rect.height),
-    className: String(el.className || '').slice(0, 160),
-    text: text.replace(/\\s+/g, ' ').slice(0, 80)
-  });
-  if (score > chosenScore) {
-    chosen = el;
-    chosenScore = score;
-    chosenIndex = index;
+for (const t of ['取消', '确定']) {
+  const b = exactBtn(t);
+  if (b) {
+    const r = b.getBoundingClientRect();
+    b.click();
+    return { text: t, x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2) };
   }
 }
-if (!chosen) return { applied: false, reason: 'editable_missing', diagnostics };
-const scope = scopeWithCell(chosen);
-let modelApplied = false;
-if (scope) {
-  try {
-    const applyFn = function () { scope.cell.text = value; };
-    if (scope.$apply) scope.$apply(applyFn);
-    else applyFn();
-    modelApplied = true;
-  } catch (e) {}
-}
-chosen.innerHTML = value;
-chosen.dispatchEvent(new Event('input', { bubbles: true }));
-chosen.dispatchEvent(new Event('change', { bubbles: true }));
-try {
-  chosen.focus();
-  window.getSelection().removeAllRanges();
-} catch (e) {}
-return { applied: true, modelApplied, chosenIndex, chosenScore, diagnostics };
+return { text: null };
+"""
+    )
+    if not dismiss or not dismiss.get("text"):
+        return dismiss
+    time.sleep(1.5)
+    still = browser.execute_script("return (document.body.innerText || '').includes('上次没有保存');")
+    if still and dismiss.get("x"):
+        browser.execute_cdp_cmd("Input.dispatchMouseEvent", {"type": "mousePressed", "x": dismiss["x"], "y": dismiss["y"], "button": "left", "clickCount": 1})
+        browser.execute_cdp_cmd("Input.dispatchMouseEvent", {"type": "mouseReleased", "x": dismiss["x"], "y": dismiss["y"], "button": "left", "clickCount": 1})
+        time.sleep(1.5)
+    return dismiss
+
+
+def _focus_xiumi_editor(browser):
+    editables = browser.find_elements(By.CSS_SELECTOR, "[contenteditable]")
+    for el in editables:
+        try:
+            if el.is_displayed():
+                browser.execute_script("arguments[0].scrollIntoView({block:'center'});", el)
+                time.sleep(0.3)
+                ActionChains(browser).move_to_element(el).click().perform()
+                return el
+        except Exception:
+            continue
+    return editables[0] if editables else None
+
+
+def _paste_xiumi_html(browser, html_text: str) -> bool:
+    """Replace editor content by trusted paste: clear, write clipboard, Ctrl+V.
+
+    The clipboard must carry both text/html and text/plain so Xiumi's paste
+    handler builds renderable components rather than the frozen _qiBlock.
+    """
+    _setup_xiumi_clipboard_cdp(browser)
+    _dismiss_xiumi_recover_dialog(browser)
+
+    plain = re.sub(r"\n+", "\n", re.sub(r"<[^>]+>", "\n", html_text)).strip()
+    write_result = browser.execute_async_script(
+        """
+const fragment = arguments[0];
+const plain = arguments[1];
+const done = arguments[2];
+const item = new ClipboardItem({
+  'text/html': new Blob([fragment], {type: 'text/html'}),
+  'text/plain': new Blob([plain], {type: 'text/plain'})
+});
+navigator.clipboard.write([item]).then(
+  () => done('ok'),
+  e => done('err:' + (e && e.message))
+);
 """,
         html_text,
-    ) or {}
-    return bool(state.get("applied") or state.get("modelApplied"))
+        plain,
+    )
+    if write_result != "ok":
+        _log_xiumi_debug("xiumi_clipboard_write", result=write_result)
+        return False
+
+    el = _focus_xiumi_editor(browser)
+    if el is None:
+        return False
+    time.sleep(0.4)
+
+    # 清空既有内容（第一次调用时文档为空，无害）
+    _xiumi_cdp_key_combo(browser, 2, "a", "KeyA", 65)
+    time.sleep(0.3)
+    _xiumi_cdp_key_combo(browser, 0, "Delete", "Delete", 46)
+    time.sleep(0.6)
+
+    _focus_xiumi_editor(browser)
+    time.sleep(0.4)
+    _xiumi_cdp_key_combo(browser, 2, "v", "KeyV", 86)
+    time.sleep(5)
+    return True
+
+
+def _set_editor_html(browser, html_text: str):
+    return _paste_xiumi_html(browser, html_text)
 
 
 def _data_url_to_temp_image(src: str, temp_dir: pathlib.Path, index: int) -> pathlib.Path | None:
@@ -2183,10 +2277,13 @@ def _fill_xiumi_body_then_images(browser, content_html: str, asset_base_path: pa
             asset_base_path,
         )
         _log_xiumi_debug("xiumi_image_upload_state", **upload_state)
-        print("秀米：正在应用最终排版")
-        model_applied = _set_editor_html(browser, final_html)
-        _log_xiumi_debug("xiumi_body_image_model_applied", applied=bool(model_applied))
-        _log_xiumi_editor_image_order(browser, final_html, "final_layout")
+        # 无图片需要替换时 final_html 与首次粘贴内容相同，
+        # 重复"清空再粘贴"会清掉已渲染内容，必须跳过。
+        if final_html != text_first_html:
+            print("秀米：正在应用最终排版")
+            model_applied = _set_editor_html(browser, final_html)
+            _log_xiumi_debug("xiumi_body_image_model_applied", applied=bool(model_applied))
+            _log_xiumi_editor_image_order(browser, final_html, "final_layout")
 
     dirty_state = _mark_xiumi_document_dirty(browser)
     _log_xiumi_debug("xiumi_dirty_state", **dirty_state)
@@ -2209,13 +2306,17 @@ def publish_xiumi_draft(
     dry_run: bool = False,
     leave_open: bool = False,
     upload_probe: bool = False,
+    apply_base_format: bool = True,
 ) -> dict:
     html_path_obj = pathlib.Path(html_path).resolve()
     if not html_path_obj.exists():
         raise FileNotFoundError(f"HTML 文件不存在: {html_path_obj}")
 
     content_html, asset_base_path = _resolve_content_paths(html_path_obj, markdown)
-    content_html = _apply_xiumi_base_format(content_html)
+    if apply_base_format:
+        content_html = _apply_xiumi_base_format(content_html)
+    else:
+        content_html = _promote_headings_for_xiumi(content_html)
     content_html = _prepare_xiumi_images(content_html, asset_base_path)
 
     markdown_path = pathlib.Path(markdown).resolve() if markdown else html_path_obj.with_suffix(".md")
@@ -2364,6 +2465,11 @@ def main():
         help="Upload a generated harmless test image first; upload body images only if the probe succeeds.",
     )
     parser.add_argument(
+        "--no-base-format",
+        action="store_true",
+        help="Skip the Xiumi base format normalization (h1 18px / p 14px). Use for content with custom large typography.",
+    )
+    parser.add_argument(
         "--leave-open",
         action="store_true",
         help="Compatibility option. The browser now stays open for editing by default until you press Enter.",
@@ -2384,6 +2490,7 @@ def main():
         dry_run=args.dry_run,
         leave_open=args.leave_open,
         upload_probe=args.upload_probe,
+        apply_base_format=not args.no_base_format,
     )
 
 
