@@ -375,6 +375,85 @@ def _promote_headings_for_xiumi(html_text: str) -> str:
     )
 
 
+_XIUMI_WS = re.compile(r"\s+")
+
+
+def _xiumi_camelize_css(css_text: str) -> dict:
+    out = {}
+    for decl in (css_text or "").split(";"):
+        decl = decl.strip()
+        if not decl or ":" not in decl:
+            continue
+        prop, _, val = decl.partition(":")
+        prop = prop.strip().lower()
+        val = val.strip()
+        if not prop or not val or prop == "box-sizing":
+            continue
+        parts = prop.split("-")
+        camel = parts[0] + "".join(p.capitalize() for p in parts[1:])
+        out[camel] = val
+    return out
+
+
+def _xiumi_flatten_inner_html(inner: str) -> str:
+    """把嵌套 section/div 转成 <p>（保留其 style），只留 p/span/br/strong 与文本。
+
+    浏览器 HTML 解析器会自行闭合嵌套的 <p>（section 里既有 span 又有 p 的
+    结构转 p 后正好被自动纠正成 <p><span>chip</span></p><p>正文</p>）。
+    转换产生的空 <p></p> 会被清掉，避免卡片顶部多空行。
+    """
+
+    def _tag(tag):
+        def repl(match):
+            attrs = match.group(1).strip()
+            return "<%s%s>" % (tag, (" " + attrs) if attrs else "")
+
+        return repl
+
+    html = re.sub(r"<!--[\s\S]*?-->", "", inner or "")
+    html = re.sub(r"<section\b([^>]*)>", _tag("p"), html, flags=re.I)
+    html = re.sub(r"</section>", "</p>", html, flags=re.I)
+    html = re.sub(r"<div\b([^>]*)>", _tag("p"), html, flags=re.I)
+    html = re.sub(r"</div>", "</p>", html, flags=re.I)
+    html = _XIUMI_WS.sub(" ", html)
+    html = re.sub(r"<p>\s*</p>", "", html)
+    return html.strip()
+
+
+def _xiumi_html_to_blocks(html_text: str) -> list[dict]:
+    """把设计稿 HTML 拆成 {style, text} 块：每个顶层 <section> 对应一个块。
+
+    Xiumi 的粘贴处理器会剥掉颜色/背景/边框等行内样式；直接往模型的
+    comps.items[].txt1.style（camelCase CSS）和 txt1.text（带行内样式的
+    HTML）写这些样式，渲染层和保存都会原样保留（已验证）。
+    """
+    m = re.search(r"<main[^>]*class=[\"']page[\"'][^>]*>([\s\S]*?)</main>", html_text, flags=re.I)
+    frag = m.group(1) if m else html_text
+
+    tag_re = re.compile(r"<(/?)section\b[^>]*>", flags=re.I)
+    depth = 0
+    cur_start = None
+    cur_attrs = ""
+    blocks = []
+    for tm in tag_re.finditer(frag):
+        if not tm.group(1):  # opening
+            if depth == 0:
+                cur_start = tm.end()
+                attrs_m = re.search(r"style=[\"']([^\"']*)[\"']", tm.group(0), flags=re.I)
+                cur_attrs = attrs_m.group(1) if attrs_m else ""
+            depth += 1
+        else:  # closing
+            depth -= 1
+            if depth == 0 and cur_start is not None:
+                inner = frag[cur_start:tm.start()]
+                text = _xiumi_flatten_inner_html(inner)
+                if not text:
+                    text = "<p><br></p>"
+                blocks.append({"style": _xiumi_camelize_css(cur_attrs), "text": text})
+                cur_start = None
+    return blocks
+
+
 def _first_heading(markdown_text: str) -> str:
     for line in (markdown_text or "").splitlines():
         stripped = line.strip()
@@ -2248,7 +2327,75 @@ def _fill_xiumi_fields(browser, title: str, author: str, source_url: str, digest
         _set_input_value(browser, "textarea.desc", digest)
 
 
-def _fill_xiumi_body_then_images(browser, content_html: str, asset_base_path: pathlib.Path, *, upload_probe: bool = False) -> tuple[dict, bool]:
+def _build_xiumi_comps_from_blocks(browser, blocks: list[dict]) -> bool:
+    """直接用已知的 comp schema 在模型里构建 comps.items（样式全保留）。
+
+    渲染层 DOM 从 comps.items[].txt1.style（camelCase CSS）和 txt1.text
+    （带行内样式的 HTML）映射；scope.$apply 触发重渲染；保存时原样持久化。
+    """
+    result = browser.execute_script(
+        """
+const BLOCKS = arguments[0];
+const editable = Array.from(document.querySelectorAll('[contenteditable="true"]')).find(e => e.offsetWidth > 0);
+if (!editable) return { ok: false, err: 'no editable' };
+let scope = null;
+let node = editable;
+while (node) {
+  try { const s = window.angular.element(node).scope(); if (s && s.cell) { scope = s; break; } } catch(e) {}
+  node = node.parentElement;
+}
+if (!scope) return { ok: false, err: 'no scope' };
+const ds = scope._$;
+const layer = ds.pages[0].layers[0];
+const newComps = BLOCKS.map((b, i) => ({
+  _comp: {
+    constraint: { opMenu: { "text-merged": true }, pose: { resize: "h" } },
+    pose: { position: "static", width: null, height: null },
+    style: {},
+    tplId: "paper-cp:header/1-txt-normal",
+    _$uuid: "comp-" + Date.now().toString(36) + i,
+  },
+  txt1: { type: "text", text: b.text, style: b.style },
+}));
+const run = function () {
+  layer.comps = { type: "group", constraint: { childLayout: "static" }, items: newComps };
+  if (layer._qiBlock) layer._qiBlock.items = [];
+};
+if (scope.$apply) { scope.$apply(run); }
+else { run(); }
+return { ok: true, compCount: newComps.length };
+""",
+        blocks,
+    )
+    ok = bool(result and result.get("ok"))
+    _log_xiumi_debug("xiumi_comps_built", ok=ok, compCount=(result or {}).get("compCount"), err=(result or {}).get("err"))
+    return ok
+
+
+def _fill_xiumi_body_style_aware(browser, content_html: str) -> tuple[dict, bool]:
+    """按设计稿样式填充正文：seed 粘贴 + 直接构建 comps.items。"""
+    print("秀米：正在按设计稿样式写入正文")
+    blocks = _xiumi_html_to_blocks(content_html)
+    _log_xiumi_debug("xiumi_style_aware_blocks", count=len(blocks))
+    if not blocks:
+        return {"status": "skipped", "uploaded": 0, "total": 0}, False
+
+    _paste_xiumi_html(browser, "<section><p>seed</p></section>")
+    time.sleep(2)
+    ok = _build_xiumi_comps_from_blocks(browser, blocks)
+    if not ok:
+        print("秀米：按样式构建失败，退回基础粘贴流程")
+        return _fill_xiumi_body_then_images(browser, content_html, pathlib.Path("."), upload_probe=False)
+    dirty_state = _mark_xiumi_document_dirty(browser)
+    _log_xiumi_debug("xiumi_dirty_state", **dirty_state)
+    return {"status": "skipped", "uploaded": 0, "total": 0}, ok
+
+
+def _fill_xiumi_body_then_images(browser, content_html: str, asset_base_path: pathlib.Path, *, upload_probe: bool = False, preserve_styles: bool = False) -> tuple[dict, bool]:
+    if preserve_styles and not _image_payload_stats(content_html)["image_count"]:
+        return _fill_xiumi_body_style_aware(browser, content_html)
+    if preserve_styles:
+        print("秀米：样式保留模式暂不支持图片，退回基础流程")
     print("秀米：正在写入正文文字")
     text_first_html = _replace_images_with_placeholders_for_xiumi(content_html)
     model_applied = _set_editor_html(browser, text_first_html)
@@ -2307,13 +2454,17 @@ def publish_xiumi_draft(
     leave_open: bool = False,
     upload_probe: bool = False,
     apply_base_format: bool = True,
+    preserve_styles: bool = False,
 ) -> dict:
     html_path_obj = pathlib.Path(html_path).resolve()
     if not html_path_obj.exists():
         raise FileNotFoundError(f"HTML 文件不存在: {html_path_obj}")
 
     content_html, asset_base_path = _resolve_content_paths(html_path_obj, markdown)
-    if apply_base_format:
+    if preserve_styles:
+        # 样式保留模式走模型直接构建，基础格式/标题提升会破坏原设计稿样式。
+        pass
+    elif apply_base_format:
         content_html = _apply_xiumi_base_format(content_html)
     else:
         content_html = _promote_headings_for_xiumi(content_html)
@@ -2354,7 +2505,7 @@ def publish_xiumi_draft(
 
         print("秀米：正在填充标题、作者和摘要")
         _fill_xiumi_fields(browser, final_title, final_author, final_source_url, final_digest)
-        _fill_xiumi_body_then_images(browser, content_html, asset_base_path, upload_probe=upload_probe)
+        _fill_xiumi_body_then_images(browser, content_html, asset_base_path, upload_probe=upload_probe, preserve_styles=preserve_styles)
 
         result["editor_url"] = browser.current_url
 
@@ -2380,7 +2531,7 @@ def publish_xiumi_draft(
                 )
                 _wait_editor_ready(browser, max(15, getattr(config, "WAIT_TIMEOUT", 15)))
                 _fill_xiumi_fields(browser, final_title, final_author, final_source_url, final_digest)
-                _fill_xiumi_body_then_images(browser, content_html, asset_base_path, upload_probe=upload_probe)
+                _fill_xiumi_body_then_images(browser, content_html, asset_base_path, upload_probe=upload_probe, preserve_styles=preserve_styles)
                 before_url = browser.current_url
                 print("秀米：登录完成，重新点击保存")
                 _click_save(browser)
@@ -2470,6 +2621,11 @@ def main():
         help="Skip the Xiumi base format normalization (h1 18px / p 14px). Use for content with custom large typography.",
     )
     parser.add_argument(
+        "--preserve-styles",
+        action="store_true",
+        help="Preserve the source design's inline styles by building comps.items in the model directly (backgrounds, colors, borders, fonts survive). Text-only content; images fall back to the base flow.",
+    )
+    parser.add_argument(
         "--leave-open",
         action="store_true",
         help="Compatibility option. The browser now stays open for editing by default until you press Enter.",
@@ -2491,6 +2647,7 @@ def main():
         leave_open=args.leave_open,
         upload_probe=args.upload_probe,
         apply_base_format=not args.no_base_format,
+        preserve_styles=args.preserve_styles,
     )
 
 

@@ -129,7 +129,22 @@ The editor may pop a "上次没有保存到服务器，是否恢复?" dialog tha
 ### Paste handler strips all inline styles
 
 - Only `text-align:justify` survives; `<h1>/<h2>/<h3>` map to semantic font-size 180%/140%/120%; adjacent blocks merge into ONE text component.
-- Custom colors/backgrounds/borders do NOT survive paste — they must be restyled manually in Xiumi (images are also inserted manually). Only heading hierarchy survives, via the promotion below.
+- Paste cannot preserve colors/backgrounds/borders. To keep the full source design, use the `--preserve-styles` model-build mode below instead of paste.
+
+### Preserve full design styles with `--preserve-styles` (model-build mode)
+
+Paste strips styles, but writing styles directly into the model preserves them — render, save, and the exported preview HTML all keep colors/backgrounds/borders/fonts/gradients/circular badges verbatim (verified on drafts 717852476, 717852825).
+
+```powershell
+python scripts/publish_xiumi_draft.py "xxx.html" --title "标题" --preserve-styles
+```
+
+- Parse each TOP-LEVEL `<section>` of the source into one block: the section's inline CSS (camelCased) goes into `comps.items[].txt1.style`; the inner HTML (paragraphs/spans with their inline styles) goes into `txt1.text`.
+- Convert nested `<section>`/`<div>` to `<p>` (keep their style; the browser's HTML parser auto-closes nested `<p>`), drop empty `<p></p>` artifacts.
+- Flow: seed paste → replace `layer.comps.items` inside `scope.$apply` → mark dirty → save.
+- Reach the model: `window.angular.element(contenteditable).scope()._$.pages[0].layers[0].comps.items`.
+- Comp schema: `{_comp:{constraint:{opMenu:{"text-merged":true},pose:{resize:"h"}},pose:{position:"static",width:null,height:null},style:{},tplId:"paper-cp:header/1-txt-normal",_$uuid:"comp-xxx"}, txt1:{type:"text",text:"<p style=...>...</p>",style:{camelCase CSS}}}`
+- Text-only content; if images are detected it falls back to the base paste flow.
 
 ### Preserve heading hierarchy with `_promote_headings_for_xiumi`
 
