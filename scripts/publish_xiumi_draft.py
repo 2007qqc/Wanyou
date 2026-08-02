@@ -696,10 +696,39 @@ def _wait_until_xiumi_home_settled(browser, timeout: int) -> bool:
     return False
 
 
+def _is_xiumi_editor_url(url: str) -> bool:
+    return bool(url and re.search(r"#/paper/", url or ""))
+
+
+def _wait_for_editor_loaded(browser, timeout: int) -> bool:
+    """等编辑器真正就绪：出现保存按钮与 contenteditable。"""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            has_save = len(browser.find_elements(By.CSS_SELECTOR, "button.btn-img.op-btn.save")) > 0
+            has_edit = len(browser.find_elements(By.CSS_SELECTOR, "[contenteditable=\"true\"]")) > 0
+            if has_save and has_edit:
+                return True
+        except Exception:
+            pass
+        time.sleep(1)
+    return False
+
+
 def _wait_for_xiumi_login_on_home(browser, home_url: str, login_timeout: int, wait_timeout: int):
-    print("秀米：正在打开“我的秀米”并确认登录状态")
+    print("秀米：正在打开图文编辑器并确认登录状态")
     browser.get(home_url)
     WebDriverWait(browser, wait_timeout).until(lambda d: d.execute_script("return document.readyState") in ("interactive", "complete"))
+
+    if _is_xiumi_editor_url(home_url):
+        # 直连编辑器 URL：登录态由持久化 profile 的 cookie 承载，
+        # 首页登录检测在编辑器渲染完成前会误判为未登录并误点“登录”链接。
+        # 直接等编辑器就绪即可。
+        _log_xiumi_debug("xiumi_direct_editor_url", url=browser.current_url)
+        if _wait_for_editor_loaded(browser, login_timeout):
+            print("秀米：已进入图文编辑器")
+            return
+        raise RuntimeError("未能进入图文编辑器（可能未登录）。")
 
     initial_state = _xiumi_login_state(browser)
     _log_xiumi_debug("xiumi_login_initial_state", state=initial_state)
