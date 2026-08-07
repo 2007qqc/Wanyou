@@ -1,0 +1,3 @@
+interface:
+  display_name: "Wanyou Forecast Multi-Agent"
+  short_description: "Generate complete 万有预报 with parallel agents and save to 秀米"
