@@ -16,6 +16,63 @@
 
 skill 会自行编排多代理并行和各阶段脚本，生成过程中保持浏览器登录态即可。
 
+### 装进其他 agent 工具（Codex / Copilot / Cursor …）
+
+`wanyou-forecast` 遵循 Agent Skills 开放标准（`SKILL.md` 含 `name` / `description` frontmatter），同一份 skill 可直接放进各支持该标准的工具本地目录，无需改写。源文件在仓库 `skills/wanyou-forecast/`。
+
+各工具读取 skills 的目录：
+
+| 工具 | 个人级（全局，所有项目可用） | 项目级（仅当前仓库） |
+| --- | --- | --- |
+| Claude Code | `~/.claude/skills/` | `.claude/skills/` |
+| OpenAI Codex | `~/.codex/skills/` 或 `~/.agents/skills/` | `.agents/skills/` |
+| GitHub Copilot CLI | `~/.copilot/skills/` 或 `~/.agents/skills/` | `.github/skills/`、`.claude/skills/`、`.agents/skills/` |
+| Cursor | `~/.cursor/skills/` 或 `~/.agents/skills/` | `.cursor/skills/`、`.agents/skills/`（兼容 `.claude/skills/`、`.codex/skills/`） |
+
+**方式 A：复制**（简单，但 skill 更新后需手动同步）
+
+```powershell
+# Windows
+Copy-Item -Recurse skills/wanyou-forecast "$HOME\.claude\skills\wanyou-forecast"   # Claude Code
+Copy-Item -Recurse skills/wanyou-forecast "$HOME\.codex\skills\wanyou-forecast"    # Codex
+Copy-Item -Recurse skills/wanyou-forecast "$HOME\.copilot\skills\wanyou-forecast"  # Copilot CLI
+Copy-Item -Recurse skills/wanyou-forecast "$HOME\.cursor\skills\wanyou-forecast"   # Cursor
+```
+
+```bash
+# macOS / Linux
+cp -r skills/wanyou-forecast ~/.claude/skills/wanyou-forecast
+cp -r skills/wanyou-forecast ~/.codex/skills/wanyou-forecast
+cp -r skills/wanyou-forecast ~/.copilot/skills/wanyou-forecast
+cp -r skills/wanyou-forecast ~/.cursor/skills/wanyou-forecast
+```
+
+**方式 B：软链接**（推荐，单一来源，仓库 `git pull` 后自动同步）
+
+```powershell
+# Windows（Junction 目录联接无需管理员权限；SymbolicLink 需开发者模式）
+$target = (Resolve-Path skills/wanyou-forecast).Path
+New-Item -ItemType Junction -Path "$HOME\.claude\skills\wanyou-forecast"  -Target $target
+New-Item -ItemType Junction -Path "$HOME\.codex\skills\wanyou-forecast"   -Target $target
+New-Item -ItemType Junction -Path "$HOME\.copilot\skills\wanyou-forecast" -Target $target
+New-Item -ItemType Junction -Path "$HOME\.cursor\skills\wanyou-forecast"  -Target $target
+```
+
+```bash
+# macOS / Linux
+ln -s "$(pwd)/skills/wanyou-forecast" ~/.claude/skills/wanyou-forecast
+ln -s "$(pwd)/skills/wanyou-forecast" ~/.codex/skills/wanyou-forecast
+ln -s "$(pwd)/skills/wanyou-forecast" ~/.copilot/skills/wanyou-forecast
+ln -s "$(pwd)/skills/wanyou-forecast" ~/.cursor/skills/wanyou-forecast
+```
+
+装完后：
+
+- **Claude Code**：直接输入 `/wanyou-forecast`。
+- **Copilot CLI**：先 `/skills reload`（或 `copilot skill add skills/wanyou-forecast`），再输入 `/wanyou-forecast`。
+- **Cursor**：输入 `/wanyou-forecast`。
+- **Codex**：重启 Codex 后在新会话中描述任务，或直接提 `/wanyou-forecast` 触发。
+
 ## 功能概览
 
 - 抓取教务通知、家园网、图书馆、新清华学堂、物理系学术报告和公众号信息
