@@ -2420,11 +2420,70 @@ def _fill_xiumi_body_style_aware(browser, content_html: str) -> tuple[dict, bool
     return {"status": "skipped", "uploaded": 0, "total": 0}, ok
 
 
+def _read_xiumi_comp_image_srcs(browser) -> list[str]:
+    values = browser.execute_script(
+        """
+const out = [];
+const editable = Array.from(document.querySelectorAll('[contenteditable="true"]')).find(e => e.offsetWidth > 0);
+if (!editable) return out;
+let node = editable, scope = null;
+while (node) {
+  try { const s = window.angular.element(node).scope(); if (s && s.cell) { scope = s; break; } } catch(e) {}
+  node = node.parentElement;
+}
+if (scope) {
+  const items = (scope._$.pages[0].layers[0].comps.items) || [];
+  for (const c of items) {
+    if (c.img1) {
+      const src = c.img1.src || c.img1.url || '';
+      if (src) out.push(src);
+    }
+  }
+}
+return out;
+"""
+    )
+    return [_normalize_xiumi_image_url(str(v)) for v in (values or []) if str(v or "").strip()]
+
+
+def _paste_image_get_cdn_url(browser, data_url: str) -> str:
+    """粘贴含 data URL 图片的片段，让秀米自动上传并返回 CDN 地址。
+
+    data URL 直接写进文本 comp 保存后会被秀米剥离（已验证）；粘贴会触发秀米
+    自己的图片上传转换，能拿到 img.xiumi.us 的持久化 URL。
+    """
+    probe = '<section><p>wanyou-image</p><img src="%s" style="width:60px;"><p>end</p></section>' % data_url
+    _paste_xiumi_html(browser, probe)
+    deadline = time.time() + 20
+    while time.time() < deadline:
+        for src in _read_xiumi_comp_image_srcs(browser):
+            if _looks_like_user_xiumi_image(src):
+                return src
+        time.sleep(1)
+    return ""
+
+
+def _fill_xiumi_body_style_aware_with_images(browser, content_html: str, asset_base_path: pathlib.Path) -> tuple[dict, bool]:
+    """样式保留模式处理图片：本地图先粘贴转 CDN，再内联进文本 comp 直接构建。"""
+    for src in _local_image_sources(content_html):
+        candidate = pathlib.Path(src)
+        if not candidate.is_absolute():
+            candidate = (asset_base_path.parent / candidate).resolve()
+        if not candidate.exists():
+            _log_xiumi_debug("xiumi_image_cdn_missing", src=src)
+            continue
+        cdn = _paste_image_get_cdn_url(browser, _image_file_to_data_url(candidate))
+        if cdn:
+            content_html = content_html.replace('src="%s"' % src, 'src="%s"' % cdn)
+            _log_xiumi_debug("xiumi_image_cdn_inline", src=src, cdn=cdn[:90])
+        else:
+            _log_xiumi_debug("xiumi_image_cdn_failed", src=src)
+    return _fill_xiumi_body_style_aware(browser, content_html)
+
+
 def _fill_xiumi_body_then_images(browser, content_html: str, asset_base_path: pathlib.Path, *, upload_probe: bool = False, preserve_styles: bool = False) -> tuple[dict, bool]:
-    if preserve_styles and not _image_payload_stats(content_html)["image_count"]:
-        return _fill_xiumi_body_style_aware(browser, content_html)
     if preserve_styles:
-        print("秀米：样式保留模式暂不支持图片，退回基础流程")
+        return _fill_xiumi_body_style_aware_with_images(browser, content_html, asset_base_path)
     print("秀米：正在写入正文文字")
     text_first_html = _replace_images_with_placeholders_for_xiumi(content_html)
     model_applied = _set_editor_html(browser, text_first_html)
@@ -2652,7 +2711,7 @@ def main():
     parser.add_argument(
         "--preserve-styles",
         action="store_true",
-        help="Preserve the source design's inline styles by building comps.items in the model directly (backgrounds, colors, borders, fonts survive). Text-only content; images fall back to the base flow.",
+        help="Preserve the source design's inline styles by building comps.items in the model directly (backgrounds, colors, borders, fonts survive). Local images are pasted to trigger Xiumi upload, then inlined as CDN URLs.",
     )
     parser.add_argument(
         "--leave-open",
