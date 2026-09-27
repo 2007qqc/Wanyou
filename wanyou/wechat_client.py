@@ -116,6 +116,31 @@ def create_api_session():
     return session
 
 
+WECHAT_ARTICLE_UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/153.0.0.0 Safari/537.36"
+)
+
+
+def wechat_source():
+    """当前公众号抓取来源："weread" 或 "mptext"。"""
+    return str(getattr(config, "WECHAT_SOURCE", "mptext") or "mptext").strip().lower()
+
+
+def create_article_session():
+    """正文抓取用的会话。
+
+    weread 路线直连 mp.weixin.qq.com，免登录、不需要任何密钥；
+    mptext 路线才需要 X-Auth-Key。
+    """
+    session = requests.Session()
+    if wechat_source() == "weread":
+        session.headers["User-Agent"] = WECHAT_ARTICLE_UA
+    else:
+        session.headers["X-Auth-Key"] = _get_public_api_key()
+    return session
+
+
 def get_wechat_account_keywords():
     keywords = getattr(config, "WECHAT_ACCOUNT_KEYWORDS", None)
     if keywords:
@@ -285,7 +310,24 @@ def fetch_articles(session, fakeid, timeout, account_keyword=""):
     return items
 
 
+def fetch_article_html_direct(session, article_url, timeout):
+    """直连 mp.weixin.qq.com 取文章 HTML（免登录、无第三方依赖）。"""
+    headers = {
+        "User-Agent": WECHAT_ARTICLE_UA,
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "zh-CN,zh;q=0.9",
+    }
+    resp = session.get(article_url, headers=headers, timeout=timeout)
+    resp.raise_for_status()
+    if "charset" not in resp.headers.get("content-type", "").lower():
+        resp.encoding = "utf-8"
+    return resp.text
+
+
 def fetch_article_html(session, article_url, timeout):
+    if wechat_source() == "weread":
+        return fetch_article_html_direct(session, article_url, timeout)
+
     base_url = getattr(config, "WECHAT_PUBLIC_API_BASE_URL", "").strip().rstrip("/")
     encoded_url = quote(article_url, safe=":/?&=%#")
     fmt = quote(getattr(config, "WECHAT_DOWNLOAD_FORMAT", "html"), safe="")

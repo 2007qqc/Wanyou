@@ -122,6 +122,23 @@ WECHAT_DOWNLOAD_FORMAT = "html"
 WECHAT_DAYS_LIMIT = 0
 WECHAT_MAIN_RECENT_DAYS = 7
 
+# 公众号抓取来源：
+#   "weread"  —— 微信读书网页版（默认；一次运行即可抓满一周，不依赖任何第三方域名）
+#   "mptext"  —— 旧的 down.mptext.top 第三方 API（2026-10-30 域名到期，仅留作回滚）
+WECHAT_SOURCE = os.environ.get("WECHAT_SOURCE", "weread").strip().lower()
+# 微信读书路线：目标公众号的 bookId（MP_WXS_<base64decode(__biz) 的数字部分>）。
+# 号名不用写在这里，运行时从书架接口反查。
+WEREAD_ACCOUNT_BOOK_IDS = [
+    "MP_WXS_3531191868",  # 清华大学学生会
+    "MP_WXS_3089010740",  # 清华青年科创
+]
+WEREAD_DEBUG_PORT = _env_int("WEREAD_DEBUG_PORT", 9333)
+# 登录态和人机校验的信任都留在这个 profile 里，换目录就得重新扫码。
+WEREAD_PROFILE_DIR = os.environ.get("WEREAD_PROFILE_DIR", "output/selenium_cache/weread-debug-profile")
+WEREAD_CHROME_PATH = os.environ.get("WEREAD_CHROME_PATH", "")
+# 一页 = 20 次群发（实测一个号一页覆盖约 15 天），所以 2 页足够一周且只发 2 次请求。
+WEREAD_MAX_PAGES = _env_int("WEREAD_MAX_PAGES", 2)
+
 # 兼容旧配置（当前脚本不再使用）
 WECHAT_BIZ = ""
 WECHAT_APPMSG_LIST_URL = ""

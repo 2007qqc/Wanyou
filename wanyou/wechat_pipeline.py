@@ -8,7 +8,15 @@ from wanyou.decider import apply_keyword_rules, should_copy_with_llm
 from wanyou.filter_debug import log_filter_decision
 from wanyou.temporal_filter import assess_temporal_relevance
 from wanyou.utils_issue_filter import current_issue_cutoff
-from wanyou.wechat_client import create_api_session, dedupe_items, fetch_articles, resolve_fakeids
+from wanyou.wechat_client import (
+    create_api_session,
+    create_article_session,
+    dedupe_items,
+    fetch_articles,
+    resolve_fakeids,
+    wechat_source,
+)
+from wanyou.weread_client import collect_articles as collect_weread_articles
 from wanyou.wechat_content import enrich_items_with_content
 from wanyou.utils_html import _rule_clean_markdown
 from wanyou.utils_llm import chat_complete
@@ -209,21 +217,26 @@ def collect_wechat_items(days_limit=None):
     timeout = getattr(config, "WECHAT_REQUEST_TIMEOUT", 15)
     sleep_seconds = getattr(config, "WECHAT_SLEEP_SECONDS", 1)
 
-    print("公众号：正在创建 API 会话")
-    session = create_api_session()
-    accounts = resolve_fakeids(session, timeout)
-    print(f"公众号：共匹配 {len(accounts)} 个账号，开始抓取推送")
+    if wechat_source() == "weread":
+        print("公众号：来源为微信读书（weread），正文直连 mp.weixin.qq.com")
+        session = create_article_session()
+        items = collect_weread_articles(days_limit=days_limit)
+    else:
+        print("公众号：正在创建 API 会话")
+        session = create_api_session()
+        accounts = resolve_fakeids(session, timeout)
+        print(f"公众号：共匹配 {len(accounts)} 个账号，开始抓取推送")
 
-    items = []
-    for account in accounts:
-        items.extend(
-            fetch_articles(
-                session,
-                account["fakeid"],
-                timeout,
-                account_keyword=account.get("keyword", ""),
+        items = []
+        for account in accounts:
+            items.extend(
+                fetch_articles(
+                    session,
+                    account["fakeid"],
+                    timeout,
+                    account_keyword=account.get("keyword", ""),
+                )
             )
-        )
 
     items = dedupe_items(items)
     items.sort(key=lambda item: item.get("timestamp") or 0, reverse=True)
