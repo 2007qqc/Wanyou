@@ -9,3 +9,6 @@ llm_decisions.jsonl
 !.env.example
 .vscode/
 .claude/
+.zcode/
+.codex/
+.tmp_pycache/

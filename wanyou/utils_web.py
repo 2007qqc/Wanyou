@@ -8,16 +8,20 @@ import config
 from wanyou.browser import browser_supports_profile_dir, get_selenium_browser_name, make_browser_options, make_webdriver
 
 
-def make_browser(headless=None):
+def make_browser(headless=None, *, persistent_profile=False):
     os.makedirs(config.SELENIUM_CACHE_DIR, exist_ok=True)
     os.environ.setdefault("SE_CACHE_PATH", os.path.abspath(config.SELENIUM_CACHE_DIR))
     browser_name = get_selenium_browser_name()
     profile_dir = ""
     if browser_supports_profile_dir(browser_name):
-        profile_dir = tempfile.mkdtemp(
-            prefix=f"{browser_name}-profile-",
-            dir=os.path.abspath(config.SELENIUM_CACHE_DIR),
-        )
+        if persistent_profile:
+            profile_dir = os.path.abspath(config.UNIFIED_AUTH_PROFILE_DIR)
+            os.makedirs(profile_dir, exist_ok=True)
+        else:
+            profile_dir = tempfile.mkdtemp(
+                prefix=f"{browser_name}-profile-",
+                dir=os.path.abspath(config.SELENIUM_CACHE_DIR),
+            )
     use_headless = config.HEADLESS if headless is None else bool(headless)
     options = make_browser_options(browser_name, profile_dir, headless=use_headless)
     browser = make_webdriver(browser_name, options)

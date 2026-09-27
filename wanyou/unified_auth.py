@@ -266,7 +266,9 @@ def _wait_for_manual_auth(browser, initial_url: str, timeout_seconds: int) -> bo
 
 
 def authenticate_shared_browser(username: str, password: str, debug_dir: str, initial_url: str, stage_label: str = "统一认证"):
-    browser = make_browser(headless=False)
+    # Reuse one on-disk browser identity: WebVPN stores trusted-device state
+    # in cookies/local storage, which cannot survive a temporary Selenium profile.
+    browser = make_browser(headless=False, persistent_profile=True)
     os.makedirs(debug_dir, exist_ok=True)
 
     print(f"正在打开{stage_label}浏览器会话")

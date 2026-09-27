@@ -45,6 +45,12 @@ USER_AGENT = (
     "(KHTML, like Gecko) Chrome/70.0.3538.25 Safari/537.36"
 )
 SELENIUM_CACHE_DIR = "./output/selenium_cache"
+# Keep the unified-auth browser identity so WebVPN's trusted-device decision
+# survives between Wanyou runs. Override with WANYOU_AUTH_PROFILE_DIR when needed.
+UNIFIED_AUTH_PROFILE_DIR = os.environ.get(
+    "WANYOU_AUTH_PROFILE_DIR",
+    os.path.join(SELENIUM_CACHE_DIR, "unified-auth-profile"),
+)
 
 # 日期/时间窗口
 DAYS_WINDOW_INFO = 300
