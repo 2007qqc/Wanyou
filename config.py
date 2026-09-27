@@ -271,6 +271,13 @@ XIUMI_IMAGE_UPLOAD_MAX_FAILURES = _env_int("XIUMI_IMAGE_UPLOAD_MAX_FAILURES", 3)
 XIUMI_IMAGE_UPLOAD_RETRIES = _env_int("XIUMI_IMAGE_UPLOAD_RETRIES", 2)
 XIUMI_IMAGE_UPLOAD_BATCH_SIZE = _env_int("XIUMI_IMAGE_UPLOAD_BATCH_SIZE", 6)
 XIUMI_IMAGE_UPLOAD_STALL_SECONDS = _env_int("XIUMI_IMAGE_UPLOAD_STALL_SECONDS", 180)
+# 秀米「粘贴转 CDN」通道吃不下大图。实测：0.4 MB 的图全部成功，6~7 MB 的
+# 新清华学堂海报 3 张全部失败（cdn_failed），草稿里就是断图。所以超过下面
+# 阈值就先在浏览器里用 canvas 降采样再粘。阈值取 1 MB：远高于已验证成功的
+# 量级，又远低于已验证失败的量级，留足余量。
+XIUMI_IMAGE_MAX_BYTES = _env_int("XIUMI_IMAGE_MAX_BYTES", 1_000_000)
+# 降采样时的最长边上限（像素）。手机端正文宽度约 700px，1600 足够清晰。
+XIUMI_IMAGE_MAX_DIMENSION = _env_int("XIUMI_IMAGE_MAX_DIMENSION", 1600)
 LLM_SUMMARY_SYSTEM_PROMPT = (
     "你是清华大学物理系学生会“万有预报”编辑助理。"
     "请将通知压缩成 100 字以内的中文要点摘要，突出和本科生有关的时间、地点、对象、报名或截止信息。"

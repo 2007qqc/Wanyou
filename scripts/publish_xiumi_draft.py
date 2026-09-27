@@ -94,6 +94,80 @@ def _image_file_to_data_url(path: pathlib.Path) -> str:
     return f"data:{mime_type};base64,{data}"
 
 
+# 在浏览器里把 data URL 解码 → canvas 缩放 → 重编码。
+# 用浏览器而不是 PIL，是因为这里本来就有个开着的浏览器，不必为一次缩放引入新依赖。
+_SHRINK_IMAGE_JS = """
+  const cb = arguments[arguments.length - 1];
+  const [dataUrl, maxDim, quality] = arguments;
+  const img = new Image();
+  img.onload = function () {
+    let {width, height} = img;
+    const scale = Math.min(1, maxDim / Math.max(width, height));
+    const w = Math.max(1, Math.round(width * scale));
+    const h = Math.max(1, Math.round(height * scale));
+    const canvas = document.createElement("canvas");
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext("2d");
+    // JPEG 没有透明通道，先铺白底，否则 PNG 的透明区会变成黑块。
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, w, h);
+    ctx.drawImage(img, 0, 0, w, h);
+    try {
+      cb(canvas.toDataURL("image/jpeg", quality));
+    } catch (e) {
+      cb("ERR:" + e);
+    }
+  };
+  img.onerror = function () { cb("ERR:decode_failed"); };
+  img.src = dataUrl;
+"""
+
+
+def _shrink_data_url(browser, data_url: str, max_bytes: int, max_dimension: int) -> str:
+    """把 data URL 缩到 max_bytes 以下；缩不动就返回空串（调用方据此走占位）。"""
+    quality = 0.85
+    for _ in range(4):
+        shrunk = browser.execute_async_script(_SHRINK_IMAGE_JS, data_url, max_dimension, quality)
+        if not shrunk or str(shrunk).startswith("ERR:"):
+            _log_xiumi_debug("xiumi_image_shrink_failed", error=str(shrunk)[:120])
+            return ""
+        if len(shrunk) * 3 // 4 <= max_bytes:
+            return shrunk
+        # 还太大：先降质量，质量见底了再降分辨率。
+        if quality > 0.5:
+            quality -= 0.15
+        else:
+            max_dimension = max(480, int(max_dimension * 0.75))
+            quality = 0.7
+    _log_xiumi_debug("xiumi_image_shrink_gave_up", remaining_bytes=len(shrunk) * 3 // 4, max_bytes=max_bytes)
+    return ""
+
+
+def _image_upload_data_url(browser, path: pathlib.Path) -> str:
+    """给「粘贴转 CDN」通道用的图片 data URL，超过阈值先降采样。
+
+    秀米那条通道对文件大小有上限，超限的图会静默失败（草稿里留成断图）。
+    """
+    max_bytes = max(0, int(getattr(config, "XIUMI_IMAGE_MAX_BYTES", 1_000_000) or 0))
+    raw_size = path.stat().st_size
+    data_url = _image_file_to_data_url(path)
+    if not max_bytes or raw_size <= max_bytes:
+        return data_url
+
+    max_dimension = max(480, int(getattr(config, "XIUMI_IMAGE_MAX_DIMENSION", 1600) or 1600))
+    shrunk = _shrink_data_url(browser, data_url, max_bytes, max_dimension)
+    if shrunk:
+        _log_xiumi_debug(
+            "xiumi_image_shrunk",
+            src=str(path),
+            before_bytes=raw_size,
+            after_bytes=len(shrunk) * 3 // 4,
+        )
+        return shrunk
+    return data_url
+
+
 def _apply_xiumi_base_format(html_text: str) -> str:
     """Post-process Xiumi content HTML to align with the base format defined in format.md.
 
@@ -2677,18 +2751,40 @@ def _fill_xiumi_body_style_aware_with_images(browser, content_html: str, asset_b
             candidate = (asset_base_path.parent / candidate).resolve()
         if not candidate.exists():
             _log_xiumi_debug("xiumi_image_cdn_missing", src=src)
+            content_html = _replace_image_src_with_placeholder(content_html, src)
             continue
         cdn = _paste_image_get_cdn_url(
             browser,
-            _image_file_to_data_url(candidate),
+            _image_upload_data_url(browser, candidate),
             expected_size=candidate.stat().st_size,
         )
         if cdn:
             content_html = content_html.replace('src="%s"' % src, 'src="%s"' % cdn)
             _log_xiumi_debug("xiumi_image_cdn_inline", src=src, cdn=cdn[:90])
         else:
+            # 留着本地路径的话，草稿里就是一条指向 E:/... 的断链，编辑时看不出问题出在哪。
+            # 换成显式占位，排版时一眼能看到缺哪张。
             _log_xiumi_debug("xiumi_image_cdn_failed", src=src)
+            content_html = _replace_image_src_with_placeholder(content_html, src)
     return _fill_xiumi_body_style_aware(browser, content_html)
+
+
+def _replace_image_src_with_placeholder(html_text: str, src: str) -> str:
+    """把指定 src 的 <img> 换成占位段落，避免把本地路径带进秀米草稿。"""
+    placeholder = (
+        "<p style=\"margin:8px 0;color:#8a7c58;font-size:14px;\">"
+        "[配图上传未完成，请在秀米图库中手动补充]"
+        "</p>"
+    )
+
+    def repl(match):
+        tag = match.group(0)
+        src_match = re.search(r"\bsrc=(['\"])(.*?)\1", tag, flags=re.I)
+        if (src_match.group(2) if src_match else "") != src:
+            return tag
+        return placeholder
+
+    return re.sub(r"<img\b[^>]*>", repl, html_text or "", flags=re.I)
 
 
 def _fill_xiumi_body_then_images(browser, content_html: str, asset_base_path: pathlib.Path, *, upload_probe: bool = False, preserve_styles: bool = False) -> tuple[dict, bool]:

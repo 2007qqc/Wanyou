@@ -84,16 +84,21 @@ python skills/wanyou-richtext-export/scripts/run_wanyou_richtext_export.py "$INT
 
 ### 阶段 6 —— 存成秀米草稿
 
-**`--preserve-styles` 必带**，它才是让草稿带格式的那一步：
+**先跑一遍 Markdown 预处理**，它会做三件推秀米必需的事（见 `scripts/prepare_xiumi_markdown.py` 的模块 docstring）：把内嵌 `data:` 图片落地成本地文件、把相对路径改成绝对路径、把被 Markdown 吃掉下划线的路径（`module_lib_20260927_0752` → `modulelib202609270752`）模糊匹配回真实文件。
 
 ```bash
-python scripts/publish_xiumi_draft.py "$INTEGRATION_DIR/wanyou_combined.html" --markdown "$INTEGRATION_DIR/wanyou_combined.md" --title "万有预报" --preserve-styles
+python scripts/prepare_xiumi_markdown.py "$INTEGRATION_DIR/wanyou_combined.md"
 ```
 
-推之前先自查两件事：
+它会打印「残留 data:image ...（必须为 0）」和「仍找不到：N 张」——**这两个数不为 0 就别往下推**，否则会静默丢图。产出是 `wanyou_combined_xiumi.md`。
 
-1. `grep -c 'data:image' "$INTEGRATION_DIR/wanyou_combined_xiumi.md"` 必须为 **0**。内嵌 base64 的图写进文本 comp 后会被秀米在保存时静默剥离，要先落地成本地文件再把引用指过去（`![](data:image/png;base64,...)` → `![](xiumi_images/img_0001.png)`）。
-2. 标题里的中文不要走命令行——用脚本文件里的 Python 字面量传，避免编码问题。
+再推。**`--markdown` 传预处理后的 `_xiumi.md`，`--preserve-styles` 必带**，它才是让草稿带格式的那一步：
+
+```bash
+python scripts/publish_xiumi_draft.py "$INTEGRATION_DIR/wanyou_combined.html" --markdown "$INTEGRATION_DIR/wanyou_combined_xiumi.md" --title "万有预报" --preserve-styles
+```
+
+标题里的中文不要走命令行——用脚本文件里的 Python 字面量传，避免编码问题。
 
 推完**先看日志**再下结论（`output/xiumi_debug/*.jsonl`）：
 
@@ -162,6 +167,7 @@ python scripts/publish_xiumi_draft.py "xxx.html" --title "标题" --preserve-sty
 - comp schema：`{_comp:{constraint:{opMenu:{"text-merged":true},pose:{resize:"h"}},pose:{position:"static",width:null,height:null},style:{},tplId:"paper-cp:header/1-txt-normal",_$uuid:"comp-xxx"}, txt1:{type:"text",text:"<p style=...>...</p>",style:{camelCase CSS}}}`
 - 圆形数字徽章、橙色胶囊标题、渐变背景、虚线占位框这些行内样式都能保留。
 - 图片走 `_fill_xiumi_body_style_aware_with_images`：先把**本地文件**图片粘贴转成 `img.xiumi.us` 的 CDN 地址（URL 带 `-sz_<字节数>`，可用来校验是否是真图），再内联进文本 comp。**`data:` URL 图片转不出 CDN 地址**，保存后会被秀米剥离，所以必须先把图落地成本地文件。
+- **这条粘贴通道有文件大小上限。** 实测 0.4 MB 的图全过、6~7 MB 的新清华学堂海报全挂（`xiumi_image_cdn_failed`，草稿里是断图）。现在超过 `XIUMI_IMAGE_MAX_BYTES`（默认 1 MB）的图会先用 canvas 降到最长边 `XIUMI_IMAGE_MAX_DIMENSION`（默认 1600px）再粘，日志记 `xiumi_image_shrunk`；仍失败则换成 `[配图上传未完成…]` 占位。查日志时 `xiumi_image_cdn_inline` 的条数应当等于本地图总数。
 - **「只取顶层 `<section>`」是个已复现的真 bug**：万有正文只有一个顶层 section 包住整篇，于是整篇挤进**一个** comp（日志 `xiumi_style_aware_blocks count=1` → `xiumi_comps_built compCount=1`），卡片的 `background`/`border`/`border-radius` 全部从 comp 级掉进文本内部，渲染出来就是**无格式正文**。能正常显示的已验证草稿（717852476 / 717852825 / 718085184）都是 10–11 个 comp、卡片样式在 comp 级。下沉到卡片级后同一份稿子得到 19 个 comp、19 个都带 comp 级样式，文本内容与原来逐字节一致。
 - 排查「草稿没格式」先看 `xiumi_render_style_probe`：它同时记录**模型里**和**真正渲染出来的 DOM 里**的样式数。模型有、渲染层没有 → 渲染层在丢；两边都有却仍无格式 → 问题不在渲染。
 

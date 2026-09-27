@@ -57,11 +57,21 @@ python scripts/publish_xiumi_draft.py output/xxx/wanyou_xxx.html --markdown outp
 | `auto` | 先试 inline，超过 `XIUMI_MAX_INLINE_IMAGE_HTML_CHARS` 就退化成 omit |
 | `omit` | 删掉所有图只留占位，最快但草稿无图 |
 
+### 大图会被静默吞掉（`--preserve-styles` 路径）
+
+`--preserve-styles` 走的是「粘贴转 CDN」通道，这条通道**有文件大小上限**。实测分界很清楚：0.4 MB 的图全部成功，而新清华学堂 6~7 MB 的海报 3 张全部 `cdn_failed`，草稿里就是断图。`crawlers_hall` 存的是原始大图，所以这个坑每次出学堂海报都会撞上。
+
+现在超过 `XIUMI_IMAGE_MAX_BYTES`（默认 1 MB）的图会先在浏览器里用 canvas 降采样（最长边 `XIUMI_IMAGE_MAX_DIMENSION`，默认 1600px，JPEG 重编码）再粘，日志里记 `xiumi_image_shrunk`。仍然失败的话会换成 `[配图上传未完成，请在秀米图库中手动补充]` 占位，**不会再留一条指向 `E:/...` 的本地断链**。
+
+推完查日志时，把 `xiumi_image_cdn_inline` / `xiumi_image_cdn_failed` / `xiumi_image_shrunk` 三条对着看：`inline` 数应当等于本地图总数。
+
 在 `.env` 里设置：
 
 ```ini
 XIUMI_IMAGE_MODE=upload
 XIUMI_MAX_INLINE_IMAGE_HTML_CHARS=900000
+XIUMI_IMAGE_MAX_BYTES=1000000
+XIUMI_IMAGE_MAX_DIMENSION=1600
 ```
 
 ## 秀米写入的坑（2026-08，真实草稿验证过）
