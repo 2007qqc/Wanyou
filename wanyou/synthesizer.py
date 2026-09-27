@@ -304,7 +304,6 @@ def _select_items_with_llm(section_name: str, items: List[dict], limit: int) -> 
         system_prompt,
         user_prompt,
         model=getattr(config, "SYNTHESIS_LLM_MODEL", "") or None,
-        max_tokens=180,
         temperature=0,
         task_label=f"正在筛选{section_name}保留条目",
     )
@@ -356,7 +355,6 @@ def _summarize_item(item: dict) -> str:
         ),
         f"标题: {title}\n来源: {item.get('source', '')}\n正文:\n{content[:2500]}",
         model=getattr(config, "SYNTHESIS_LLM_MODEL", "") or None,
-        max_tokens=180,
         temperature=0,
         task_label=f"正在生成要点透视：{title[:24]}",
     )
@@ -398,7 +396,6 @@ def _generate_transition(section_name: str, summaries: Iterable[str], has_items:
             getattr(config, "LLM_TRANSITION_SYSTEM_PROMPT", "请写一句栏目导语。"),
             f"栏目: {section_name}\n{joined}",
             model=getattr(config, "SYNTHESIS_LLM_MODEL", "") or None,
-            max_tokens=80,
             temperature=0,
             task_label=f"正在生成栏目导语：{section_name}",
         )

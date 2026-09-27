@@ -397,9 +397,11 @@ python skills/wanyou-full-run/scripts/run_wanyou_full_run.py --with-login --rank
 | 变量 | 用途 |
 | --- | --- |
 | `LLM_PROVIDER` | LLM provider，可选 `deepseek`、`openai`、`zhipuai`、`gemini`，默认 `deepseek` |
-| `LLM_MODEL` | 全局默认 LLM 模型，默认 `deepseek-v4-flash` |
+| `LLM_MODEL` | 全局默认 LLM 模型，默认 `deepseek-flash` |
 | `LLM_BASE_URL` | LLM 兼容接口地址 |
 | `LLM_API_KEY_ENV` | 全局 LLM 读取哪个 API key 变量（各 provider 有各自的默认 key 变量） |
+| `LLM_MAX_TOKENS` | 单次请求输出上限。默认 `0`＝不下发 `max_tokens`，由服务端给默认值：非思考 8K、思考 64K（`max` 档 128K），上限 384K |
+| `DEEPSEEK_REASONING_EFFORT` | 思考强度，只对 `deepseek` 下发。可选 `none`（关闭思考）/ `low` / `high` / `max`；默认 `medium`（官方兼容别名，实际等同 `high`，即服务端默认档） |
 | `FINAL_MARKDOWN_LLM_CLEAN_ENABLED` | 最终 Markdown 是否经 LLM 清洗排版，默认开启 |
 
 各步骤可使用独立模型覆盖全局 `LLM_MODEL`，不设置时回退到 `LLM_MODEL`：

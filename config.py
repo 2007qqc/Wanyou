@@ -181,10 +181,14 @@ OCR_VISION_LLM_BASE_URL = os.environ.get("OCR_VISION_LLM_BASE_URL", IMAGE_LLM_BA
 OCR_VISION_LLM_MODEL = os.environ.get("OCR_VISION_LLM_MODEL", IMAGE_LLM_MODEL)
 OCR_VISION_LLM_API_KEY_ENV = os.environ.get("OCR_VISION_LLM_API_KEY_ENV", IMAGE_LLM_API_KEY_ENV)
 OCR_VISION_LLM_TIMEOUT_SECONDS = _env_int("OCR_VISION_LLM_TIMEOUT_SECONDS", IMAGE_LLM_TIMEOUT_SECONDS)
+# DeepSeek 的模型名只写这一个地方。deepseek-v4-flash / deepseek-v4-flash-vision-exp
+# 是遗留兼容别名，底层模型已下线，请求只是被临时转发到 deepseek-flash；
+# deepseek-chat / deepseek-reasoner 已于 2026-07-24 彻底退役。
+DEEPSEEK_DEFAULT_MODEL = "deepseek-flash"
 WECHAT_IMAGE_LLM_ENABLED = _env_bool("WECHAT_IMAGE_LLM_ENABLED", True)
 WECHAT_IMAGE_LLM_PROVIDER = os.environ.get("WECHAT_IMAGE_LLM_PROVIDER", IMAGE_LLM_PROVIDER)
 WECHAT_IMAGE_LLM_BASE_URL = os.environ.get("WECHAT_IMAGE_LLM_BASE_URL", IMAGE_LLM_BASE_URL)
-WECHAT_IMAGE_LLM_MODEL = os.environ.get("WECHAT_IMAGE_LLM_MODEL", IMAGE_LLM_MODEL or "deepseek-v4-flash")
+WECHAT_IMAGE_LLM_MODEL = os.environ.get("WECHAT_IMAGE_LLM_MODEL", IMAGE_LLM_MODEL or DEEPSEEK_DEFAULT_MODEL)
 WECHAT_IMAGE_LLM_API_KEY_ENV = os.environ.get("WECHAT_IMAGE_LLM_API_KEY_ENV", IMAGE_LLM_API_KEY_ENV)
 WECHAT_IMAGE_LLM_TIMEOUT_SECONDS = _env_int("WECHAT_IMAGE_LLM_TIMEOUT_SECONDS", IMAGE_LLM_TIMEOUT_SECONDS)
 WECHAT_FILTER_MD_WITH_LLM = False
@@ -194,16 +198,21 @@ WECHAT_FILTER_FALLBACK_KEEP = True
 # LLM 自动决策（yes/no）
 LLM_ENABLED = True
 LLM_PROVIDER = os.environ.get("LLM_PROVIDER", "deepseek")  # "zhipuai", "openai", "chatgpt", "deepseek", "gemini"
-LLM_MODEL = os.environ.get("LLM_MODEL", "deepseek-v4-flash")
-DECIDER_LLM_MODEL = os.environ.get("DECIDER_LLM_MODEL", "deepseek-v4-flash")
-WECHAT_SUMMARY_LLM_MODEL = os.environ.get("WECHAT_SUMMARY_LLM_MODEL", "deepseek-v4-flash")
-PHYSICS_EXTRACT_LLM_MODEL = os.environ.get("PHYSICS_EXTRACT_LLM_MODEL", "deepseek-v4-flash")
-RAW_RANKING_LLM_MODEL = os.environ.get("RAW_RANKING_LLM_MODEL", "deepseek-v4-flash")
-SYNTHESIS_LLM_MODEL = os.environ.get("SYNTHESIS_LLM_MODEL", "deepseek-v4-flash")
-MARKDOWN_CLEAN_LLM_MODEL = os.environ.get("MARKDOWN_CLEAN_LLM_MODEL", "deepseek-v4-flash")
+LLM_MODEL = os.environ.get("LLM_MODEL", DEEPSEEK_DEFAULT_MODEL)
+DECIDER_LLM_MODEL = os.environ.get("DECIDER_LLM_MODEL", DEEPSEEK_DEFAULT_MODEL)
+WECHAT_SUMMARY_LLM_MODEL = os.environ.get("WECHAT_SUMMARY_LLM_MODEL", DEEPSEEK_DEFAULT_MODEL)
+PHYSICS_EXTRACT_LLM_MODEL = os.environ.get("PHYSICS_EXTRACT_LLM_MODEL", DEEPSEEK_DEFAULT_MODEL)
+RAW_RANKING_LLM_MODEL = os.environ.get("RAW_RANKING_LLM_MODEL", DEEPSEEK_DEFAULT_MODEL)
+SYNTHESIS_LLM_MODEL = os.environ.get("SYNTHESIS_LLM_MODEL", DEEPSEEK_DEFAULT_MODEL)
+MARKDOWN_CLEAN_LLM_MODEL = os.environ.get("MARKDOWN_CLEAN_LLM_MODEL", DEEPSEEK_DEFAULT_MODEL)
 LLM_API_KEY_ENV = os.environ.get("LLM_API_KEY_ENV", "")
 LLM_BASE_URL = os.environ.get("LLM_BASE_URL", "")
 LLM_TIMEOUT_SECONDS = 20
+# 单次请求的输出上限。0（默认）表示不下发 max_tokens，由服务端给默认值：
+# 非思考 8K、思考 64K（reasoning_effort=max 时 128K），上限 384K。
+# 各调用点以前写死的 5~800 太小，截断后调用方的 `or fallback` 会静默降级，
+# 从日志上看不出来，所以改成默认不限；确实要限长再设成正数。
+LLM_MAX_TOKENS = _env_int("LLM_MAX_TOKENS", 0)
 LLM_LOG_PATH = "llm_decisions.jsonl"
 INTERACTIVE_REVIEW = False
 DEFAULT_COPY_WHEN_UNDECIDED = True
@@ -211,6 +220,14 @@ OPENAI_API_KEY_ENV = "OPENAI_API_KEY"
 OPENAI_BASE_URL = "https://api.openai.com/v1"
 DEEPSEEK_API_KEY_ENV = "DEEPSEEK_API_KEY"
 DEEPSEEK_BASE_URL = "https://api.deepseek.com/v1"
+# 思考强度，对应请求体的 reasoning_effort，只对 deepseek 下发（别的 provider 不认这个字段）。
+#   none          关闭思考模式
+#   low / high    开启思考，指定强度
+#   max           开启思考，最高强度（max_tokens 默认额度也随之抬到 128K）
+# medium（默认）是官方兼容别名，实际映射为 high —— 也就是服务端本来就用的默认档。
+# 另注：思考模式下 temperature 不生效（官方明确说明不报错、但也不起作用），
+# 想让它重新起作用就把这里设成 none。
+DEEPSEEK_REASONING_EFFORT = os.environ.get("DEEPSEEK_REASONING_EFFORT", "medium").strip().lower()
 GEMINI_API_KEY_ENV = "GEMINI_API_KEY"
 GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
 ZHIPUAI_API_KEY_ENV = "ZHIPUAI_API_KEY"

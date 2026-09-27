@@ -325,7 +325,6 @@ def _score_section_items(section_name: str, items: List[dict]) -> Dict[str, dict
         system_prompt,
         user_prompt,
         model=getattr(config, "RAW_RANKING_LLM_MODEL", "") or None,
-        max_tokens=max(5000, min(8000, 900 * len(items))),
         timeout_seconds=90,
         temperature=0,
         task_label=f"正在为 raw 条目打分排序：{section_name}",

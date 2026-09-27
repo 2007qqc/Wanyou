@@ -145,7 +145,6 @@ def _write_info_llm_hint(debug_dir, browser, session):
     result = chat_complete(
         "You are diagnosing a campus notice page. The current page has already activated the 教务通知 tab but the list is empty. Read the HTML and JS snippets and output compact JSON with keys selectors, calls, diagnosis. Only output JSON.",
         f"HTML:\n{page_html}\n\nJS:\n{chr(10).join(interesting_scripts)[:9000]}",
-        max_tokens=300,
         temperature=0,
         task_label="正在分析教务页面结构",
     )

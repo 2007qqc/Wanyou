@@ -85,7 +85,6 @@ def ocr_image_with_llm(image_ref):
         api_key_env=api_key_env,
         base_url=base_url or None,
         timeout_seconds=getattr(config, "OCR_VISION_LLM_TIMEOUT_SECONDS", 20),
-        max_tokens=1200,
         temperature=0,
     )
     return (text or "").strip()

@@ -118,7 +118,6 @@ def classify_image_type_with_llm(image_url):
         api_key_env=api_key_env or None,
         base_url=base_url or None,
         timeout_seconds=getattr(config, "WECHAT_IMAGE_LLM_TIMEOUT_SECONDS", config.LLM_TIMEOUT_SECONDS),
-        max_tokens=8,
         temperature=0,
     )
     text = (text or "").upper()

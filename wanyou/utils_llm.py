@@ -69,6 +69,30 @@ def _resolve_base_url(provider_name: str, base_url: Optional[str] = None) -> str
     return _provider_defaults(provider_name)["base_url"].rstrip("/")
 
 
+def _resolve_max_tokens() -> Optional[int]:
+    """本次请求下发的 max_tokens；None 表示不下发，交给服务端。
+
+    不下发时服务端按模式给默认值：非思考 8K、思考 64K（effort=max 时 128K），
+    上限 384K。以前各调用点写死的 5~800 本身就偏小，而截断是静默的——返回空
+    内容后调用方的 `or 兜底值` 会悄悄降级，日志上看不出错。所以默认不下发
+    （config.LLM_MAX_TOKENS = 0），确实要限长再显式设成正数。
+    """
+    configured = int(getattr(config, "LLM_MAX_TOKENS", 0) or 0)
+    return configured if configured > 0 else None
+
+
+def _resolve_reasoning_effort(provider_name: str) -> Optional[str]:
+    """本次请求下发的 reasoning_effort；None 表示不下发。
+
+    只对 deepseek 下发——这个字段是 DeepSeek 特有的，别的 provider 不认。
+    取值 none/low/high/max；none 关闭思考模式，其余开启。medium、minimal、
+    xhigh、ultra 是官方兼容别名，不报错但会被映射到上面的档位。
+    """
+    if provider_name != "deepseek":
+        return None
+    return str(getattr(config, "DEEPSEEK_REASONING_EFFORT", "") or "").strip().lower() or None
+
+
 def _api_key(env_name: str) -> Optional[str]:
     return os.getenv(env_name, "").strip() or None
 
@@ -133,18 +157,16 @@ def _call_zhipu_sdk(
     model_name: str,
     messages: List[dict],
     temperature: float,
-    max_tokens: int,
 ) -> Optional[str]:
     if ZhipuAI is None:
         return None
+    kwargs = {"model": model_name, "messages": messages, "temperature": temperature}
+    max_tokens = _resolve_max_tokens()
+    if max_tokens is not None:
+        kwargs["max_tokens"] = max_tokens
     try:
         client = ZhipuAI(api_key=api_key)
-        resp: Any = client.chat.completions.create(
-            model=model_name,
-            messages=messages,
-            temperature=temperature,
-            max_tokens=max_tokens,
-        )
+        resp: Any = client.chat.completions.create(**kwargs)
         return _extract_text(resp.choices[0].message.content)
     except Exception:
         return None
@@ -157,7 +179,6 @@ def _call_openai_compatible(
     base_url: str,
     messages: List[dict],
     timeout: int,
-    max_tokens: int,
     temperature: float,
 ) -> Optional[str]:
     headers = _headers(api_key)
@@ -168,8 +189,13 @@ def _call_openai_compatible(
         "model": model_name,
         "messages": messages,
         "temperature": temperature,
-        "max_tokens": max_tokens,
     }
+    max_tokens = _resolve_max_tokens()
+    if max_tokens is not None:
+        body["max_tokens"] = max_tokens
+    reasoning_effort = _resolve_reasoning_effort(provider_name)
+    if reasoning_effort is not None:
+        body["reasoning_effort"] = reasoning_effort
     endpoint = f"{base_url}/chat/completions"
 
     try:
@@ -195,15 +221,15 @@ def _call_gemini_text(
     system_prompt: str,
     user_prompt: str,
     timeout: int,
-    max_tokens: int,
     temperature: float,
 ) -> Optional[str]:
     endpoint = f"{base_url}/models/{model_name}:generateContent"
     body = _gemini_parts_from_text(system_prompt, user_prompt)
-    body["generationConfig"] = {
-        "temperature": temperature,
-        "maxOutputTokens": max_tokens,
-    }
+    generation_config = {"temperature": temperature}
+    max_tokens = _resolve_max_tokens()
+    if max_tokens is not None:
+        generation_config["maxOutputTokens"] = max_tokens
+    body["generationConfig"] = generation_config
     try:
         resp = requests.post(endpoint, params={"key": api_key}, json=body, timeout=timeout)
         resp.raise_for_status()
@@ -231,7 +257,6 @@ def chat_complete(
     api_key_env: Optional[str] = None,
     base_url: Optional[str] = None,
     timeout_seconds: Optional[int] = None,
-    max_tokens: int = 200,
     temperature: float = 0,
     task_label: str = "\u004c\u004c\u004d\u4efb\u52a1",
 ) -> Optional[str]:
@@ -254,7 +279,7 @@ def chat_complete(
     attempts = 2
     for attempt in range(attempts):
         if provider_name == "zhipuai" and not base_url and not api_key_env:
-            content = _call_zhipu_sdk(api_key, model_name, messages, temperature, max_tokens)
+            content = _call_zhipu_sdk(api_key, model_name, messages, temperature)
 
         if content is None and provider_name in _OPENAI_COMPATIBLE_PROVIDERS:
             content = _call_openai_compatible(
@@ -264,7 +289,6 @@ def chat_complete(
                 _resolve_base_url(provider_name, base_url),
                 messages,
                 timeout,
-                max_tokens,
                 temperature,
             )
         elif content is None and provider_name == "gemini":
@@ -275,7 +299,6 @@ def chat_complete(
                 system_prompt,
                 user_prompt,
                 timeout,
-                max_tokens,
                 temperature,
             )
         if content:
@@ -307,7 +330,6 @@ def multimodal_complete(
     api_key_env: Optional[str] = None,
     base_url: Optional[str] = None,
     timeout_seconds: Optional[int] = None,
-    max_tokens: int = 32,
     temperature: float = 0,
 ) -> Optional[str]:
     if not config.LLM_ENABLED:
@@ -327,7 +349,6 @@ def multimodal_complete(
             body = {
                 "model": model_name,
                 "temperature": temperature,
-                "max_tokens": max_tokens,
                 "messages": [
                     {"role": "system", "content": system_prompt},
                     {
@@ -339,12 +360,22 @@ def multimodal_complete(
                     },
                 ],
             }
+            max_tokens = _resolve_max_tokens()
+            if max_tokens is not None:
+                body["max_tokens"] = max_tokens
+            reasoning_effort = _resolve_reasoning_effort(provider_name)
+            if reasoning_effort is not None:
+                body["reasoning_effort"] = reasoning_effort
             resp = requests.post(endpoint, headers=_headers(api_key), json=body, timeout=timeout)
             resp.raise_for_status()
             data = resp.json()
             content = _extract_text(data["choices"][0]["message"]["content"])
         elif provider_name == "gemini":
             endpoint = f"{_resolve_base_url(provider_name, base_url)}/models/{model_name}:generateContent"
+            generation_config = {"temperature": temperature}
+            max_tokens = _resolve_max_tokens()
+            if max_tokens is not None:
+                generation_config["maxOutputTokens"] = max_tokens
             body = {
                 "systemInstruction": {"parts": [{"text": system_prompt}]},
                 "contents": [
@@ -356,10 +387,7 @@ def multimodal_complete(
                         ],
                     }
                 ],
-                "generationConfig": {
-                    "temperature": temperature,
-                    "maxOutputTokens": max_tokens,
-                },
+                "generationConfig": generation_config,
             }
             resp = requests.post(endpoint, params={"key": api_key}, json=body, timeout=timeout)
             resp.raise_for_status()
@@ -395,7 +423,6 @@ def llm_decide_yes_no(context: str) -> Optional[bool]:
     content = chat_complete(
         config.LLM_SYSTEM_PROMPT,
         context,
-        max_tokens=5,
         temperature=0,
         task_label="\u6b63\u5728\u5224\u65ad\u6761\u76ee\u662f\u5426\u4fdd\u7559",
     )
