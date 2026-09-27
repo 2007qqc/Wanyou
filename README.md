@@ -16,7 +16,7 @@
 
 skill 会自行编排多代理并行和各阶段脚本，生成过程中保持浏览器登录态即可。
 
-### 装进其他 agent 工具（Codex / Copilot / Cursor …）
+### 装进其他 agent 工具（ZCode / Codex / Copilot / Cursor …）
 
 `wanyou-forecast` 遵循 Agent Skills 开放标准（`SKILL.md` 含 `name` / `description` frontmatter），同一份 skill 可直接放进各支持该标准的工具本地目录，无需改写。源文件在仓库 `skills/wanyou-forecast/`。
 
@@ -28,6 +28,7 @@ skill 会自行编排多代理并行和各阶段脚本，生成过程中保持�
 | OpenAI Codex | `~/.codex/skills/` 或 `~/.agents/skills/` | `.agents/skills/` |
 | GitHub Copilot CLI | `~/.copilot/skills/` 或 `~/.agents/skills/` | `.github/skills/`、`.claude/skills/`、`.agents/skills/` |
 | Cursor | `~/.cursor/skills/` 或 `~/.agents/skills/` | `.cursor/skills/`、`.agents/skills/`（兼容 `.claude/skills/`、`.codex/skills/`） |
+| ZCode | `~/.zcode/skills/` 或 `~/.agents/skills/` | `.zcode/skills/`、`.agents/skills/` |
 
 **方式 A：复制**（简单，但 skill 更新后需手动同步）
 
@@ -37,6 +38,7 @@ Copy-Item -Recurse skills/wanyou-forecast "$HOME\.claude\skills\wanyou-forecast"
 Copy-Item -Recurse skills/wanyou-forecast "$HOME\.codex\skills\wanyou-forecast"    # Codex
 Copy-Item -Recurse skills/wanyou-forecast "$HOME\.copilot\skills\wanyou-forecast"  # Copilot CLI
 Copy-Item -Recurse skills/wanyou-forecast "$HOME\.cursor\skills\wanyou-forecast"   # Cursor
+Copy-Item -Recurse skills/wanyou-forecast "$HOME\.agents\skills\wanyou-forecast"   # ZCode
 ```
 
 ```bash
@@ -45,6 +47,7 @@ cp -r skills/wanyou-forecast ~/.claude/skills/wanyou-forecast
 cp -r skills/wanyou-forecast ~/.codex/skills/wanyou-forecast
 cp -r skills/wanyou-forecast ~/.copilot/skills/wanyou-forecast
 cp -r skills/wanyou-forecast ~/.cursor/skills/wanyou-forecast
+cp -r skills/wanyou-forecast ~/.agents/skills/wanyou-forecast  # ZCode
 ```
 
 **方式 B：软链接**（推荐，单一来源，仓库 `git pull` 后自动同步）
@@ -56,6 +59,7 @@ New-Item -ItemType Junction -Path "$HOME\.claude\skills\wanyou-forecast"  -Targe
 New-Item -ItemType Junction -Path "$HOME\.codex\skills\wanyou-forecast"   -Target $target
 New-Item -ItemType Junction -Path "$HOME\.copilot\skills\wanyou-forecast" -Target $target
 New-Item -ItemType Junction -Path "$HOME\.cursor\skills\wanyou-forecast"  -Target $target
+New-Item -ItemType Junction -Path "$HOME\.agents\skills\wanyou-forecast"  -Target $target
 ```
 
 ```bash
@@ -64,6 +68,7 @@ ln -s "$(pwd)/skills/wanyou-forecast" ~/.claude/skills/wanyou-forecast
 ln -s "$(pwd)/skills/wanyou-forecast" ~/.codex/skills/wanyou-forecast
 ln -s "$(pwd)/skills/wanyou-forecast" ~/.copilot/skills/wanyou-forecast
 ln -s "$(pwd)/skills/wanyou-forecast" ~/.cursor/skills/wanyou-forecast
+ln -s "$(pwd)/skills/wanyou-forecast" ~/.agents/skills/wanyou-forecast  # ZCode
 ```
 
 装完后：
@@ -72,6 +77,7 @@ ln -s "$(pwd)/skills/wanyou-forecast" ~/.cursor/skills/wanyou-forecast
 - **Copilot CLI**：先 `/skills reload`（或 `copilot skill add skills/wanyou-forecast`），再输入 `/wanyou-forecast`。
 - **Cursor**：输入 `/wanyou-forecast`。
 - **Codex**：重启 Codex 后在新会话中描述任务，或直接提 `/wanyou-forecast` 触发。
+- **ZCode**：skill 列表在会话启动时加载，安装后需**重启会话**，再输入 `/wanyou-forecast`。
 
 ## 功能概览
 
@@ -95,7 +101,7 @@ ln -s "$(pwd)/skills/wanyou-forecast" ~/.cursor/skills/wanyou-forecast
 
 - 需要统一身份认证的网页：教务通知、家园网信息。
 - 不需要统一身份认证的网页：图书馆、新清华学堂、物理系学术报告等公开页面。
-- 需要 API 抓取的公众号：通过 `WECHAT_PUBLIC_API_KEY` 获取公众号文章列表和正文摘要。
+- 公众号：走微信读书网页版获取文章列表（`WECHAT_SOURCE="weread"`，默认），正文直连 `mp.weixin.qq.com`。旧路线 `down.mptext.top` 域名 2026-10-30 到期，降级为回滚路径（`WECHAT_SOURCE="mptext"`）。
 
 `raw` 尽量保留抓取到的原始信息；`ranked raw` 用 LLM 从物理系本科生视角评估重要性并排序；最终合成阶段只选择高优先级内容，做最后一层清洗和排版，输出本地 `.md`、`.html`，也可以继续送到秀米生成草稿。
 
@@ -138,7 +144,7 @@ cp .env.example .env
 | `WANYOU_USERNAME` | 登录时需要 | 统一身份认证用户名（清华学号） |
 | `WANYOU_PASSWORD` | 登录时需要 | 统一身份认证密码 |
 | `OCR_SPACE_API_KEY` | OCR 时需要 | 图片文字识别 API key |
-| `WECHAT_PUBLIC_API_KEY` | 抓取公众号时需要 | 公众号文章 API key，来自 `down.mptext.top` |
+| `WECHAT_PUBLIC_API_KEY` | 仅回滚时需要 | 旧公众号 API key，来自 `down.mptext.top`；`WECHAT_SOURCE="mptext"` 时才用 |
 | `WANYOU_SELENIUM_BROWSER` | 否 | 浏览器：macOS 默认 `chrome`，Windows 默认 `edge`，也支持`safari` |
 
 `cp .env.example .env` 后编辑填入 key 即可运行：
@@ -337,7 +343,13 @@ python skills/wanyou-full-run/scripts/run_wanyou_full_run.py --with-login --rank
 - `output/<timestamp>/debug/filter_decisions_summary.json`：筛选汇总。
 - `output/<timestamp>/debug/*.html` / `*.txt`：登录、页面结构和选择器快照。
 
-公众号抓取常见错误：
+公众号抓取常见错误（微信读书路线）：
+
+- `-2041`：腾讯防水墙的人机校验没过（页面上是「安全检测中」）。到那个专用调试 Chrome 窗口里手动过一次验证，再重跑。**不是接口下线。**
+- `-2003`：列表接口频率风控。停手，隔几小时再来（一天别超过两次）。
+- `-2010 用户不存在`：微信读书登录态失效，在调试 Chrome 里重新扫码登录。
+
+公众号抓取常见错误（`WECHAT_SOURCE="mptext"` 回滚路线）：
 
 - `ret=-1`：API 认证失败，检查 `WECHAT_PUBLIC_API_KEY`。
 - `ret=401` / `ret=403`：API 无权限或 key 权限不足。
@@ -408,3 +420,10 @@ python skills/wanyou-full-run/scripts/run_wanyou_full_run.py --with-login --rank
 | `WANYOU_DOTENV_OVERRIDE` | 设为 `0` 时系统环境变量优先于 `.env`，默认覆盖 |
 | `WANYOU_ENV_FILE` | 指定其他 env 文件路径 |
 | `WANYOU_RUN_DATE` | 模拟某一天的日期（`YYYY-MM-DD`），仅影响时效筛选 |
+# 万有预报
+
+## 校外统一认证
+
+教务通知和家园网通过清华 WebVPN 访问。首次运行带登录源的命令时，程序会打开可见浏览器；完成账号密码、二次认证，并在清华统一认证页面选择“信任此设备浏览器”。认证 profile 默认保存在 `output/selenium_cache/unified-auth-profile`，后续运行会复用该 profile，从而通常不再要求二次认证。
+
+不要清理该目录或更换浏览器用户目录；如果需要迁移 profile，可设置环境变量 `WANYOU_AUTH_PROFILE_DIR` 指向持久目录。Edge/Chrome 不能同时用同一 profile 启动普通浏览器窗口。

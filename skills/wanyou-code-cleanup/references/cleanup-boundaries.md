@@ -1,43 +1,43 @@
-# Cleanup Boundaries
+# 清理边界
 
-Use this reference when cleaning code touched by recent debugging.
+清理刚被排查动过的代码时，先读这份参考。
 
-## Xiumi Browser Automation
+## 秀米浏览器自动化
 
-Preserve behavior before reducing code size:
+缩减代码之前，先保住这些行为：
 
-- Start from `XIUMI_HOME_URL` and confirm login before creating a graphic draft.
-- Avoid direct pre-login navigation to `paper/for/new`.
-- Keep weak matching for `图文排版`, `新建图文`, `图文`, and `上传图片(无水印)` because Xiumi labels can vary.
-- Write text before image upload. Upload images through `我的图库`, rewrite image URLs with Xiumi asset URLs, then apply final layout.
-- Keep local image upload before `data:image/...` payloads; data URLs can trigger COS errors.
-- Keep the browser open after save or exception until the user presses Enter.
-- Move details to JSONL logs instead of printing upload attempts, selector candidates, tracebacks, or per-image URLs.
+- 从 `XIUMI_HOME_URL` 起步，确认登录后再新建图文草稿。
+- 不要在登录前直接跳 `paper/for/new`。
+- `图文排版`、`新建图文`、`图文`、`上传图片(无水印)` 保持模糊匹配，秀米的文案会变。
+- 先写文本再传图。图片走 `我的图库` 上传，把图片 URL 换成秀米素材 URL，最后再应用排版。
+- 优先本地图片文件，其次才是 `data:image/...`；data URL 会触发 COS 报错。
+- 保存或异常之后，浏览器都要留到用户按回车再关。
+- 上传尝试、选择器候选、traceback、逐图 URL 这类细节写进 JSONL 日志，不要打到 stdout。
 
-## LLM And Content Pipeline
+## LLM 与内容流水线
 
-Clean for fewer calls without reducing observability:
+在保证可观测性的前提下，减少调用次数：
 
-- Source pages/APIs produce raw Markdown.
-- Ranked raw ranks and selects without LLM text cleaning.
-- Final Markdown/HTML performs selection, formatting cleanup, and theme decoration.
-- Preserve abstracts and necessary details for academic talks and table-like source content.
-- If content appears missing, inspect raw and ranked raw before changing synthesis prompts.
+- 来源页面/接口产出 raw Markdown。
+- ranked raw 只做打分与选题，不做 LLM 文本清洗。
+- 最终 Markdown/HTML 负责选题、格式清理与主题装饰。
+- 学术报告与表格类来源的摘要和必要细节要保留。
+- 内容看起来缺了，先看 raw 和 ranked raw，再动合成 prompt。
 
-## Environment And Output
+## 环境与产物
 
-- Keep `.env` and `.env.example` aligned when adding or renaming variables.
-- Keep README environment examples in one consolidated setup section.
-- Do not commit generated `output/` artifacts unless the user explicitly asks for fixtures.
-- Prefer debug logs under `output/*debug*` over noisy stdout.
+- 增删改变量时，`.env` 与 `.env.example` 要同步。
+- README 里的环境示例集中放在同一节。
+- 除非用户明确要样例，不要提交 `output/` 里的生成产物。
+- 调试输出写 `output/*debug*` 下的日志，不要刷屏 stdout。
 
-## Verification Ladder
+## 验证阶梯
 
-Use the smallest check that can catch the likely breakage:
+用能抓到该类故障的最小检查：
 
-1. `python -m py_compile <changed python files>`
-2. wrapper help or dry-run commands for CLI argument changes
-3. local HTML regeneration for formatting/export changes
-4. module-level crawler run for source parser changes
-5. full run only after shared pipeline changes
-6. live Xiumi or WeChat publishing only with explicit user approval
+1. `python -m py_compile <改动的 python 文件>`
+2. CLI 参数改动 → 跑 wrapper 的 help 或 dry-run
+3. 排版/导出改动 → 本地重新生成 HTML
+4. 来源解析改动 → 跑单模块爬虫
+5. 只有改了共享流水线，才跑完整流程
+6. 真实推送秀米或公众号，必须用户明确同意

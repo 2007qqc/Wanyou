@@ -1,6 +1,6 @@
-﻿# LLM Routing Notes
+# LLM 路由备注
 
-- Provider routing is centralized in `wanyou/utils_llm.py`.
-- Default keep/drop behavior lives in `wanyou/decider.py`.
-- Undecided items now fall back to `DEFAULT_COPY_WHEN_UNDECIDED` when `INTERACTIVE_REVIEW` is `False`.
-- Summaries and transitions are generated in `wanyou/synthesizer.py`.
+- provider 路由集中在 `wanyou/utils_llm.py`。
+- 默认的保留/剔除行为在 `wanyou/decider.py`。
+- `INTERACTIVE_REVIEW` 为 `False` 时，未决条目回落到 `DEFAULT_COPY_WHEN_UNDECIDED`。
+- 摘要与栏目过渡语在 `wanyou/synthesizer.py` 生成。

@@ -1,33 +1,34 @@
 ---
 name: wanyou-code-cleanup
-description: Clean Wanyou code after bug fixes or feature spikes. Use when Codex is asked to remove dirty code, stale debug prints, duplicated logic, dead branches, overgrown helper functions, repeated LLM cleaning/filtering calls, or temporary Selenium/Xiumi upload scaffolding while preserving verified behavior.
+description: 修完 bug 或做完功能验证之后清理万有代码。需要删除脏代码、过期调试打印、重复逻辑、死分支、过度膨胀的辅助函数、重复的 LLM 清洗/筛选调用，或临时的 Selenium/秀米上传脚手架，同时保住已验证行为时使用。
 ---
 
-# Wanyou Code Cleanup
+# 万有代码清理
 
-## Core Rule
+## 核心原则
 
-Clean only after understanding the behavior that must survive. Prefer deleting stale scaffolding, merging duplicate helpers, and moving noisy diagnostics to logs over broad rewrites.
+先弄清「必须活下来的行为」，再动手清理。优先删过期脚手架、合并重复辅助函数、把吵闹的诊断搬进日志，而不是大范围重写。
 
-## Workflow
+## 流程
 
-1. Read the recent diff and relevant call path before editing.
-2. Identify the user-visible contract: inputs, outputs, files written, browser behavior, and terminal output.
-3. Classify cleanup candidates:
-   - safe: dead code, duplicate constants, stale prints, unused variables, unreachable branches
-   - risky: timing-sensitive Selenium steps, source parsing, LLM prompts, output schema, environment loading
-4. Make small scoped edits with `apply_patch`.
-5. Preserve existing fallbacks unless a newer verified path fully replaces them.
-6. Run the narrowest useful verification first, then broaden only when the touched surface is shared.
-7. Report what was removed, what was intentionally kept, and which verification ran.
+1. 编辑前先读最近的 diff 和相关调用链。
+2. 找出面向用户的契约：输入、输出、写出的文件、浏览器行为、终端输出。
+3. 给清理候选分类：
+   - 安全：死代码、重复常量、过期打印、未使用变量、不可达分支
+   - 有风险：依赖时序的 Selenium 步骤、来源解析、LLM prompt、输出 schema、环境加载
+4. 小步改动，每步都能单独验证。
+5. 除非新的已验证路径完全取代了旧路径，否则保留既有兜底。
+6. 先跑最窄的有效验证；只有改动面是共享的，才扩大验证范围。
+7. 汇报删了什么、刻意留了什么、跑了哪些验证。
 
-## Wanyou-Specific Checks
+## 万有特有的检查项
 
-- Keep `.env`-based configuration as the single user-editable environment path.
-- Avoid reintroducing extra LLM cleaning passes. Ranking can score and select; final generation is the normal cleanup layer.
-- Keep raw/ranked raw as inspection artifacts and avoid truncating source details unless a prompt or explicit output policy requires it.
-- Keep Xiumi's verified order: login from My Xiumi, create graphic draft, write text, upload images, apply final layout, save, then wait for user Enter before closing.
-- Keep Xiumi stdout concise. Detailed selector/upload diagnostics should go to `output/xiumi_debug/*.jsonl`.
-- Do not remove cross-platform branches just because the current machine is macOS.
+- 保持 `.env` 作为唯一用户可编辑的环境配置入口。
+- 不要重新引入多余的 LLM 清洗轮次。排序环节可以打分与选题；最终生成才是常规的清理层。
+- raw / ranked raw 是排查用的产物，除非 prompt 或明确的输出策略要求，不要截断来源细节。
+- 秀米的已验证顺序：从「我的秀米」登录 → 新建图文草稿 → 写文本 → 上传图片 → 应用排版 → 保存 → 等用户回车再关。
+- 秀米 stdout 保持简洁，选择器/上传等细节写进 `output/xiumi_debug/*.jsonl`。
+- 不要因为当前机器是 Windows 就删掉跨平台分支。
+- 公众号保留回滚路径：`config.WECHAT_SOURCE` 切到 `"mptext"` 时旧路线必须仍然可用。
 
-For fragile areas, read `references/cleanup-boundaries.md` before editing.
+易碎区域改动前，先读 `references/cleanup-boundaries.md`。

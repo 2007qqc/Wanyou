@@ -1,44 +1,44 @@
-﻿---
+---
 name: wanyou-llm-filter
-description: Apply Wanyou LLM keep/drop decisions, item ranking, summaries, section transitions, and theme Markdown decoration to raw Markdown. Use when Codex needs to retest filtering prompts or summary quality without re-running crawlers.
+description: 对 raw Markdown 施加万有的 LLM 保留/剔除决策、条目排序、摘要、栏目过渡语与主题装饰。需要在不重跑爬虫的前提下复测筛选 prompt 或摘要质量时使用。
 ---
 
-# Wanyou LLM Filter
+# 万有 LLM 筛选
 
-## Purpose
+## 用途
 
-Use this skill after crawler modules have produced a raw Markdown file. It reads raw Markdown, applies LLM filtering/ranking and summaries, preserves necessary source details, and writes final Markdown.
+在爬虫模块产出 raw Markdown 之后使用。它读取 raw Markdown，施加 LLM 筛选/排序与摘要，保留必要的来源细节，写出最终 Markdown。
 
-The current filtering policy is:
+当前筛选策略：
 
-- Keep only information published within one week before the Wanyou run.
-- Keep only information directly relevant to Tsinghua Physics undergraduates.
-- Pay special attention to timestamp, publisher, target audience, and body text.
-- For overloaded sections, keep at most 4 items.
-- WeChat is handled by the crawler module as latest 5 articles by publish time.
-- Avoid stacked LLM cleaning passes. Ranked raw should not be cleaned by an LLM; final Markdown is the normal place for selection and formatting cleanup.
-- Do not arbitrarily truncate kept items. If a final item loses necessary details, inspect generation limits and prompts before shortening source text.
+- 只保留万有运行前一周内发布的信息。
+- 只保留与清华物理系本科生直接相关的信息。
+- 重点关注时间戳、发布方、目标受众与正文。
+- 栏目超载时，每栏目最多保留 4 条。
+- 公众号由爬虫模块按发布时间取最新 5 篇。
+- 避免叠加多轮 LLM 清洗。ranked raw 不应被 LLM 清洗；选题与格式清理的正常位置是最终 Markdown。
+- 不要随意截断保留条目。若最终条目丢失了必要细节，先查生成上限与 prompt，而不是缩短来源正文。
 
-## Commands
+## 命令
 
-```powershell
+```bash
 python skills/wanyou-llm-filter/scripts/run_wanyou_llm_filter.py output/module_wechat_YYYYMMDD_HHMM/wanyou_wechat_raw.md
 ```
 
-Choose a specific output path:
+指定输出路径：
 
-```powershell
+```bash
 python skills/wanyou-llm-filter/scripts/run_wanyou_llm_filter.py input_raw.md --output output/final.md
 ```
 
-Skip theme decoration:
+跳过主题装饰：
 
-```powershell
+```bash
 python skills/wanyou-llm-filter/scripts/run_wanyou_llm_filter.py input_raw.md --no-theme
 ```
 
-## Debug Rules
+## 调试规则
 
-- If an item is kept unexpectedly, inspect `wanyou/decider.py` and `wanyou/synthesizer.py` prompts first.
-- If no LLM call happens, check `LLM_ENABLED`, provider settings, and API key environment variables.
-- If output is too long, inspect section selection and final summarization prompts before adding hard truncation.
+- 某条目被意外保留时，先查 `wanyou/decider.py` 与 `wanyou/synthesizer.py` 的 prompt。
+- 完全没有 LLM 调用时，检查 `LLM_ENABLED`、provider 设置与 API key 环境变量。
+- 输出过长时，先查栏目选题与最终摘要 prompt，再考虑加硬截断。

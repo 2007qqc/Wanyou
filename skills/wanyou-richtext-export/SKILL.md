@@ -1,52 +1,52 @@
-﻿---
+---
 name: wanyou-richtext-export
-description: Export final Wanyou Markdown into H5 HTML and browser-agent payload without re-running crawlers or LLM filtering. Use when Codex needs to validate layout, theme, richtext output, or agent payload generation.
+description: 把最终万有 Markdown 导出成 H5 HTML 与 browser-agent payload，不重跑爬虫或 LLM 筛选。需要验证排版、主题、富文本产物或 agent payload 生成时使用。
 ---
 
-# Wanyou Richtext Export
+# 万有富文本导出
 
-## Purpose
+## 用途
 
-Use this skill after final Markdown already exists. It exports H5 HTML and optional browser-agent payload from the Markdown file.
+在最终 Markdown 已经存在之后使用。它从 Markdown 文件导出 H5 HTML 和可选的 browser-agent payload。
 
-## Commands
+## 命令
 
-Export HTML and agent payload:
+导出 HTML 与 agent payload：
 
-```powershell
+```bash
 python skills/wanyou-richtext-export/scripts/run_wanyou_richtext_export.py output/module_wechat_YYYYMMDD_HHMM/wanyou_wechat.md
 ```
 
-Choose output paths:
+指定输出路径：
 
-```powershell
+```bash
 python skills/wanyou-richtext-export/scripts/run_wanyou_richtext_export.py output/final.md --html output/final.html --agent-payload output/final_agent.json
 ```
 
-Only export HTML:
+只导出 HTML：
 
-```powershell
+```bash
 python skills/wanyou-richtext-export/scripts/run_wanyou_richtext_export.py output/final.md --skip-agent-payload
 ```
 
-Only export browser-agent payload:
+只导出 browser-agent payload：
 
-```powershell
+```bash
 python skills/wanyou-richtext-export/scripts/run_wanyou_richtext_export.py output/final.md --skip-html
 ```
 
-Send an existing final HTML/Markdown pair to a Xiumi draft:
+把已有的最终 HTML/Markdown 送成秀米草稿：
 
-```powershell
+```bash
 python scripts/publish_xiumi_draft.py output/final.html --markdown output/final.md --title "万有预报"
 ```
 
-For the canonical Xiumi browser workflow, read `references/xiumi-workflow.md` before changing `scripts/publish_xiumi_draft.py`.
+改 `scripts/publish_xiumi_draft.py` 之前，先读 `references/xiumi-workflow.md` 里的秀米浏览器流程。
 
-## Debug Rules
+## 调试规则
 
-- Treat HTML as the primary richtext verification target.
-- If DOCX is needed, use the full pipeline and verify local `pandoc` first.
-- Richtext export should not change crawler or LLM filtering behavior.
-- Xiumi publishing should preserve the verified internal order: text first, images second, final layout last.
-- Xiumi stdout should show only user-facing progress and final status. Detailed upload, selector, and exception diagnostics belong in `output/xiumi_debug/*.jsonl`.
+- 富文本验证以 HTML 产物为准。
+- 需要 DOCX 时走完整流水线，并先确认本机 `pandoc` 可用。
+- 富文本导出不应改变爬虫或 LLM 筛选行为。
+- 秀米推送要保住已验证的内部顺序：先文本、再图片、最后排版。
+- 秀米 stdout 只应出现面向用户的进度与最终状态；上传、选择器、异常等诊断细节写进 `output/xiumi_debug/*.jsonl`。

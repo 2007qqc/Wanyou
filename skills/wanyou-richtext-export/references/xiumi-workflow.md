@@ -1,26 +1,26 @@
-# Xiumi Draft Workflow
+# 秀米草稿流程
 
-This repository uses Xiumi as a browser-operated draft editor. Keep the workflow below stable unless a new manual test proves Xiumi has changed.
+本仓库把秀米当作浏览器里操作的草稿编辑器。除非有一次新的手工测试证明秀米改了，否则保持下面的流程不动。
 
-## Canonical Order
+## 标准顺序
 
-1. Confirm login from `XIUMI_HOME_URL`.
-2. If the user is not logged in, wait for manual login and then continue automatically.
-3. Enter `图文排版` from `我的秀米`; do not open `paper/for/new` before login is confirmed.
-4. Create or enter a new graphic draft.
-5. Write text first: convert the final Markdown/HTML into Xiumi-friendly HTML, replace image tags with temporary placeholders, and set the editor body.
-6. Upload images second: open `我的图库`, use the `上传图片(无水印)` image input, and batch-upload local body images when the input supports multiple files. Fall back to single-image upload only when a batch cannot be confirmed.
-7. Prefer local image files before `data:image/...` payloads. Inline data images can trigger Xiumi COS failures and should not block normal local images.
-8. Apply final layout last: map each original image source to its uploaded Xiumi asset URL by file name/stem and original HTML order, replace the sources, remove or mark any images that did not upload, and set the editor body again.
-9. Save the draft, print the draft URL when available, and keep the browser open for user editing until the user presses Enter in the command line.
+1. 从 `XIUMI_HOME_URL` 确认登录状态。
+2. 未登录就等用户手工登录，登录后自动继续。
+3. 从 `我的秀米` 进入 `图文排版`；登录确认之前不要打开 `paper/for/new`。
+4. 新建或进入一个图文草稿。
+5. **先写文本**：把最终 Markdown/HTML 转成秀米友好的 HTML，图片标签先换成临时占位，然后设置编辑器正文。
+6. **再传图片**：打开 `我的图库`，用 `上传图片(无水印)` 的 file input；input 支持多选时批量上传本地正文图片。只有确认不了批量，才退回逐张上传。
+7. 优先本地图片文件，其次才是 `data:image/...`。内联 data 图片会触发秀米 COS 失败，但不能因为它就阻塞正常本地图片。
+8. **最后应用排版**：按文件名/主干名与原始 HTML 顺序，把每个原始图片源映射到已上传的秀米素材 URL，替换 src，把没传上去的图片删掉或标记出来，再设置一次编辑器正文。
+9. 保存草稿，拿到 URL 就打印出来，浏览器留在原地给用户编辑，直到用户在命令行按回车。
 
-## Debug Notes
+## 调试备注
 
-- `filesLength=0` after dispatch is not enough to prove failure. Xiumi may clear the file input immediately after upload processing starts.
-- Treat a new `img.xiumi.us` or `/xmi/ua/` source as the successful upload signal.
-- Treat `N张图片上传成功` as an upload-completion signal, then resolve asset URLs through gallery DOM, Angular/gallery state, or captured upload responses. Do not keep waiting only because `<img src>` did not change.
-- Do not advance to the next upload group while Xiumi reports `图片正在上传，请稍后再试` or another busy upload state. Wait for Xiumi's upload state plus new asset URLs rather than a fixed short timeout.
-- If Xiumi shows `上传失败[cos]`, inspect whether the failing item is a converted data URL or a normal local file.
-- After at least one successful upload, a later single-image timeout should not abort the whole batch; skip or mark that image and continue with the rest.
-- The upload probe should use a harmless generated test image and should not upload real Wanyou content unless the user explicitly approves the run.
-- Keep standard output concise: login state, editor entry, text/image/layout stages, body-image batch progress, save status, and final URL. Put selector details, upload attempts, timeouts, image URLs, and tracebacks in `output/xiumi_debug/*.jsonl`.
+- dispatch 之后 `filesLength=0` 不足以证明失败。秀米可能在开始处理上传后就立刻清空 file input。
+- 出现新的 `img.xiumi.us` 或 `/xmi/ua/` 源，才算上传成功的信号。
+- `N张图片上传成功` 是上传完成的信号；之后通过图库 DOM、Angular/图库状态或抓到的上传响应去取素材 URL。不要因为 `<img src>` 没变就一直空等。
+- 秀米提示 `图片正在上传，请稍后再试` 或其他忙碌状态时，不要进入下一批上传。等秀米自己的上传状态加新素材 URL，而不是等一个固定的短超时。
+- 秀米报 `上传失败[cos]` 时，先看失败的是转换出来的 data URL 还是正常的本地文件。
+- 已经成功传过至少一张之后，后面某张单图超时不该中断整批；跳过或标记它，继续处理其余图片。
+- 上传探针要用无害的生成测试图，除非用户明确同意，不要拿真实万有内容去试。
+- stdout 保持简洁：登录状态、进入编辑器、文本/图片/排版三个阶段、正文图片批量进度、保存状态、最终 URL。选择器细节、上传尝试、超时、图片 URL、traceback 都写进 `output/xiumi_debug/*.jsonl`。

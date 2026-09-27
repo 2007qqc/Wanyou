@@ -1,6 +1,8 @@
-﻿# Campus Crawl Notes
+# 校园来源备注
 
-- `info` and `myhome` require credentials.
-- `lib` and `hall` are the preferred public smoke-test sources.
-- `physics` may require URL verification when the site changes.
-- If sandbox requests fail with `WinError 10013`, retry outside the sandbox before changing crawler logic.
+- `info` 与 `myhome` 需要凭据。
+- `lib` 与 `hall` 是首选的公开冒烟来源。
+- `physics` 在站点改版后可能需要重新核对 URL。
+- 沙箱请求报 `WinError 10013` 时，先到沙箱外重试，再考虑改爬虫逻辑。
+- 公众号走微信读书（`config.WECHAT_SOURCE = "weread"`），需要一个带调试端口、已登录的
+  Chrome；列表接口有频率风控，一天别超过两次，撞上 `-2041` / `-2003` 就停手几小时。

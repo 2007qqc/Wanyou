@@ -10,7 +10,7 @@ Collects source content from campus websites and WeChat public accounts:
 
 - **Login-required** — 教务通知 (`crawlers_info`), 家园网 (`crawlers_myhome`). Share unified authentication via `wanyou/unified_auth.py`.
 - **Public** — 图书馆 (`crawlers_lib`), 新清华学堂 (`crawlers_hall`), 物理系学术报告 (`crawlers_physics`).
-- **WeChat** — Fetches articles via `down.mptext.top` API, classifies images with vision LLM (`wechat_pipeline`, `wechat_content`, `wechat_client`).
+- **WeChat** — Lists articles via weread.qq.com (drives a dedicated debug Chrome), fetches bodies directly from `mp.weixin.qq.com`, classifies images with vision LLM (`wechat_pipeline`, `wechat_content`, `wechat_client`, `weread_client`).
 
 Code: `wanyou/crawlers_*.py`, `wanyou/wechat_pipeline.py`, `wanyou/unified_auth.py`, `wanyou/browser.py`
 
@@ -126,5 +126,6 @@ python scripts/run_wanyou_module.py login --raw-only --md-only
 - Selenium cache permissions can fail in restricted environments; `config.SELENIUM_CACHE_DIR` controls the cache path.
 - Some campus URLs can go stale after site revisions; verify source URLs before changing parsers.
 - Login-only sources should be skipped during public-only tests.
-- WeChat API may return session errors (`ret=-1`, `ret=401`, `ret=200003`) — refresh `WECHAT_PUBLIC_API_KEY` and re-run.
+- WeChat listing (`WECHAT_SOURCE="weread"`) needs a logged-in debug Chrome; `-2041` is the Tencent captcha not passed (solve it in that browser window and re-run), `-2003` is rate limiting (stop for a few hours; two runs a day max), `-2010` means the weread login expired.
+- Rollback route `WECHAT_SOURCE="mptext"` may return session errors (`ret=-1`, `ret=401`, `ret=200003`) — refresh `WECHAT_PUBLIC_API_KEY` and re-run.
 - Xiumi page structure changes (CSS selectors, Angular scope) can break automation — check `output/xiumi_debug/*.jsonl` first.
