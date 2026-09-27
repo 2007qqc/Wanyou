@@ -132,5 +132,5 @@ PowerShell 工具不继承 bash 的 env，每条命令都要单独设 `$env:WANY
 - 页面改版（改版式、改 CSS 选择器）会让内联 JS 启发式失效：看 jsonl 里的 `xiumi_create_failed`、`xiumi_login_not_settled`、`file_input_missing`。
 - 进了编辑器但正文没写进去：`contenteditable` / Angular scope 的探测需要更新，看 `xiumi_body_text_model_applied`。
 - 用 `--xiumi-dry-run` 试跑，避免在秀米里留下废草稿。
-- 用 `--skip-wechat` 绕开公众号抓取失败。公众号走微信读书，卡住通常是 `-2041`（人机校验没过）或 `-2003`（限流），让用户在那个专用调试 Chrome 里过验证，或隔几小时再跑。
+- 用 `--skip-wechat` 绕开公众号抓取失败。公众号走微信读书，卡住通常是 `-2041`（人机校验没过），让用户在那个专用调试 Chrome 里过验证再重跑；`-2003` 是**参数格式错误**（多为 `bookId`/URL 传错），别误判成限流。
 - 浏览器 profile 默认在关闭后清理；要保留登录态就显式传 `--xiumi-profile-dir`。

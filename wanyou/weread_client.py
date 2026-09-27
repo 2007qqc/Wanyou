@@ -15,6 +15,8 @@
   只能从 ``/web/shelf/sync`` 返回的 ``deepLink`` 里取 ``?v=``。
 * 拿到 ``-2041`` 基本就是撞上腾讯防水墙的人机校验（页面显示「安全检测中」）：
   让用户在打开的 Chrome 窗口里手动过一次就恢复，**不是接口下线**，也不是限流。
+* ``-2003`` 的真实含义是**参数格式错误**（errMsg 会明写），最常见的原因就是
+  bookId 没传对——**别照字面当成限流**，先核对实际发出去的 URL。
 * ``originalId`` 里的 ``~`` 是 base64url 的下划线（weread 的 rid 用 ``_`` 做分隔符），
   还原成 ``_`` 才能拼出打得开的原文链接。
 """
@@ -80,7 +82,9 @@ SHELF_JS = """
 
 ARTICLES_JS = """
   const cb = arguments[arguments.length - 1];
-  fetch("/web/mp/articles?bookId=%s&offset=%d", {credentials: "include"})
+  const url = "/web/mp/articles?bookId=" + encodeURIComponent(arguments[0])
+            + "&offset=" + arguments[1];
+  fetch(url, {credentials: "include"})
     .then(function(r){ return r.text() }).then(function(t){ cb(t) })
     .catch(function(e){ cb("ERR:" + e) });
 """
@@ -90,7 +94,7 @@ ADD_TO_SHELF_JS = """
   fetch("/mp/shelf/addToShelf", {
     method: "POST", credentials: "include",
     headers: {"Content-Type": "application/json;charset=UTF-8"},
-    body: JSON.stringify({bookIds: %s})
+    body: JSON.stringify({bookIds: arguments[0]})
   }).then(function(r){ return r.text() }).then(function(t){ cb(t) })
     .catch(function(e){ cb("ERR:" + e) });
 """
@@ -241,7 +245,7 @@ def list_shelf(driver):
 
 def subscribe(driver, book_ids):
     """把公众号加进书架（幂等）。"""
-    payload = _js_call(driver, ADD_TO_SHELF_JS, json.dumps(list(book_ids)))
+    payload = _js_call(driver, ADD_TO_SHELF_JS, list(book_ids))
     if payload.get("errCode"):
         raise WereadError(f"订阅公众号失败：{payload.get('errCode')}")
     return payload
@@ -257,8 +261,10 @@ def fetch_account_articles(driver, book_id, reader_url, days_limit, max_pages=2)
         payload = _js_call(driver, ARTICLES_JS, book_id, page * 20)
         err_code = payload.get("errCode")
         if err_code:
+            detail = payload.get("errMsg") or ""
             raise WereadRiskControl(
-                f"文章列表接口返回 {err_code}（多为腾讯防水墙人机校验未过，"
+                f"文章列表接口返回 {err_code} {detail}（人机校验未过时就是这个，"
+                "别被 errMsg 骗了——同一个 URL 过完验证会返回 200，"
                 "请在打开的 Chrome 窗口里手动完成验证后重跑）"
             )
         groups = payload.get("reviews") or []

@@ -174,7 +174,7 @@ python scripts/publish_xiumi_draft.py "xxx.html" --title "标题" --preserve-sty
 阶段 1 不派对应 agent 即可。常见情形：
 
 - 没有校园网凭据 → 跳过 E，改用 `public`
-- 公众号撞上 `-2041`（人机校验）或 `-2003`（限流）→ 跳过 A，或等用户过完验证/隔几小时再来
+- 公众号撞上 `-2041`（人机校验）→ 跳过 A，或等用户在那个 Chrome 窗口里过完验证再重跑
 - 只想快速出一期物理系 → 只留 B
 
 ## 环境
@@ -187,7 +187,18 @@ python scripts/publish_xiumi_draft.py "xxx.html" --title "标题" --preserve-sty
 
 **公众号来源是微信读书，不是第三方 API。** 旧的 `down.mptext.top` 域名 2026-10-30 到期，已降级为回滚路径（`WECHAT_SOURCE="mptext"` 时仍可用，但那时仍要 `WECHAT_PUBLIC_API_KEY`，且密钥与站点会话绑定、**只有 4 天有效期**）。
 
-现在的路线：脚本自动用 `--remote-debugging-port=9333` + 独立 profile 起一个专用 Chrome，登录态和人机校验信任都留在这个窗口里，**登录失效或弹验证码时 agent 会停下等用户**——把 A 的错误输出原样告诉用户，让 TA 在那个窗口里扫码/过验证即可，过完重跑 A。列表接口有频率风控（**一天最多抓两次**），撞上 `-2041` 就是人机校验没过，`-2003` 就是限流，都停手隔几小时再来，**不是接口下线**。
+现在的路线：脚本自动用 `--remote-debugging-port=9333` + 独立 profile 起一个专用 Chrome，登录态和人机校验信任都留在这个窗口里，**登录失效或弹验证码时 agent 会停下等用户**——把 A 的错误输出原样告诉用户，让 TA 在那个窗口里扫码/过验证即可，过完重跑 A。撞上 `-2041` 就是人机校验没过（过完验证重跑即可，**不是接口下线**），`-2003` 是**请求参数格式错误**（多为 `bookId`/URL 传错，**别误判成限流**），`-2010` 是登录态失效。
+
+注意：脚本自己 `subprocess.Popen` 起 Chrome 有时起不来（端口 25 秒内不响应）。手动起一次更稳，脚本会直接复用已在运行的实例：
+
+```bash
+"C:/Program Files/Google/Chrome/Application/chrome.exe" \
+  --remote-debugging-port=9333 \
+  --user-data-dir=E:/StudentsUnion/Wanyou/output/selenium_cache/weread-debug-profile \
+  --no-first-run --no-default-browser-check https://weread.qq.com/
+```
+
+另外 `attach()` 首次可能要一两分钟（Selenium Manager 在解析 driver），之后有缓存就快了，别当成卡死。
 
 ## 调试
 

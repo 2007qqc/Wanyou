@@ -126,6 +126,6 @@ python scripts/run_wanyou_module.py login --raw-only --md-only
 - Selenium cache permissions can fail in restricted environments; `config.SELENIUM_CACHE_DIR` controls the cache path.
 - Some campus URLs can go stale after site revisions; verify source URLs before changing parsers.
 - Login-only sources should be skipped during public-only tests.
-- WeChat listing (`WECHAT_SOURCE="weread"`) needs a logged-in debug Chrome; `-2041` is the Tencent captcha not passed (solve it in that browser window and re-run), `-2003` is rate limiting (stop for a few hours; two runs a day max), `-2010` means the weread login expired.
+- WeChat listing (`WECHAT_SOURCE="weread"`) needs a logged-in debug Chrome; `-2041` is the Tencent captcha not passed (solve it in that browser window and re-run), `-2010` means the weread login expired, and `-2003` means the request parameters were malformed (`errMsg` says so verbatim — check the `bookId` and the URL actually sent; it is **not** rate limiting).
 - Rollback route `WECHAT_SOURCE="mptext"` may return session errors (`ret=-1`, `ret=401`, `ret=200003`) — refresh `WECHAT_PUBLIC_API_KEY` and re-run.
 - Xiumi page structure changes (CSS selectors, Angular scope) can break automation — check `output/xiumi_debug/*.jsonl` first.
