@@ -80,6 +80,16 @@ def main():
         action="store_true",
         help="Compatibility option. Xiumi now stays open for editing by default until you press Enter.",
     )
+    parser.add_argument(
+        "--preserve-styles",
+        action="store_true",
+        help=(
+            "Build the Xiumi body directly as model comps so the source design styles "
+            "(colours, backgrounds, borders, badges) survive. Without this the trusted-paste "
+            "path is used and 秀米 strips all inline CSS, producing an unformatted draft. "
+            "Requires that the markdown has no inline data: URL images."
+        ),
+    )
     args = parser.parse_args()
 
     public_only = True
@@ -127,6 +137,7 @@ def main():
         home_url=args.xiumi_home_url,
         dry_run=args.xiumi_dry_run,
         leave_open=args.leave_open,
+        preserve_styles=args.preserve_styles,
     )
 
     for key, value in result.items():

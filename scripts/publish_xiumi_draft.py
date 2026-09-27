@@ -420,37 +420,175 @@ def _xiumi_flatten_inner_html(inner: str) -> str:
     return html.strip()
 
 
+_XIUMI_SECTION_TAG_RE = re.compile(r"<(/?)section\b([^>]*?)(/?)>", flags=re.I)
+
+
+def _top_level_section_spans(frag: str) -> list[dict]:
+    """产出 `frag` 里最外层 <section> 的 {start, inner_start, inner_end, end, attrs}。"""
+    spans = []
+    depth = 0
+    cur = None
+    for m in _XIUMI_SECTION_TAG_RE.finditer(frag):
+        closing = bool(m.group(1))
+        self_closing = bool(m.group(3))
+        if closing:
+            if depth > 0:
+                depth -= 1
+                if depth == 0 and cur is not None:
+                    spans.append(
+                        {
+                            "start": cur[0],
+                            "inner_start": cur[1],
+                            "inner_end": m.start(),
+                            "end": m.end(),
+                            "attrs": cur[2],
+                        }
+                    )
+                    cur = None
+        elif self_closing:
+            if depth == 0:
+                spans.append(
+                    {
+                        "start": m.start(),
+                        "inner_start": m.start(),
+                        "inner_end": m.start(),
+                        "end": m.end(),
+                        "attrs": m.group(2),
+                    }
+                )
+        else:
+            if depth == 0:
+                cur = (m.start(), m.end(), m.group(2))
+            depth += 1
+    return spans
+
+
+_XIUMI_STYLE_ATTR_RE = re.compile(r"""style\s*=\s*(?:"([^"]*)"|'([^']*)')""", flags=re.I)
+
+
+def _xiumi_extract_style_attr(attrs: str) -> str:
+    """取出 style 属性的值。
+
+    不能用 `style=["']([^"']*)["']`：样式值里本身带单引号
+    （`font-family:...,'Helvetica Neue','PingFang SC',sans-serif`），
+    那样会在第一个单引号处截断，font-family 之后的 line-height/font-size
+    会被整段丢掉。必须按引号配对取值。
+    """
+    m = _XIUMI_STYLE_ATTR_RE.search(attrs or "")
+    if not m:
+        return ""
+    return m.group(1) if m.group(1) is not None else (m.group(2) or "")
+
+
+def _xiumi_style_attr(attrs: str) -> dict:
+    return _xiumi_camelize_css(_xiumi_extract_style_attr(attrs))
+
+
+def _xiumi_segment_is_meaningful(html_fragment: str) -> bool:
+    """块里得有东西：可见文字，或者图片（纯图片段落不能被当成空块丢掉）。"""
+    frag = html_fragment or ""
+    if re.search(r"<img\b", frag, flags=re.I):
+        return True
+    return bool(re.sub(r"<[^>]+>", "", frag).replace("&nbsp;", " ").strip())
+
+
+# 只有这些样式值得往子块继承；padding/border/圆角等"卡片外壳"必须留在本块，
+# 否则每个子块都会再画一个框（已验证的坑：继承背景会把子块变成第二张卡片）。
+_XIUMI_INHERIT_KEYS = (
+    "background",
+    "backgroundImage",
+    "color",
+    "fontFamily",
+    "fontSize",
+    "fontStyle",
+    "fontWeight",
+    "letterSpacing",
+    "lineHeight",
+    "textAlign",
+)
+
+
+def _xiumi_inherit(style: dict) -> dict:
+    return {k: v for k, v in (style or {}).items() if k in _XIUMI_INHERIT_KEYS}
+
+
+def _xiumi_section_blocks(own_style: dict, inner: str) -> list[dict]:
+    """把一个 <section> 拆成块：自己的文字各自成块，子 section 递归下沉。
+
+    目标是让**卡片级**样式落在 comp 级 txt1.style（已验证草稿 717852476 /
+    717852825 / 718085184 就是这个结构：卡片背景/边框/圆角在 comp 级，
+    徽章/胶囊这类行内样式在 txt1.text 里）。
+
+    - 叶子 section（没有子 section）→ 整段一块。
+    - 内容**包住**子块（子块前后都有文字）→ 整段一块，不能拆：拆开会把
+      一张卡片断成上下两个框，而且顺序会乱（已验证）。
+    - 其余容器 → 自己的文字段各成一块，子 section 递归成块，文档顺序不变。
+    """
+    children = _top_level_section_spans(inner)
+    if not children:
+        text = _xiumi_flatten_inner_html(inner)
+        return [{"style": own_style, "text": text or "<p><br></p>"}]
+
+    first_seg = _xiumi_flatten_inner_html(inner[:children[0]["start"]])
+    last_seg = _xiumi_flatten_inner_html(inner[children[-1]["end"]:])
+    if _xiumi_segment_is_meaningful(first_seg) and _xiumi_segment_is_meaningful(last_seg):
+        text = _xiumi_flatten_inner_html(inner)
+        return [{"style": own_style, "text": text or "<p><br></p>"}]
+
+    inherited = _xiumi_inherit(own_style)
+    blocks = []
+    prev = 0
+    for child in children:
+        seg = _xiumi_flatten_inner_html(inner[prev:child["start"]])
+        if _xiumi_segment_is_meaningful(seg):
+            blocks.append({"style": own_style, "text": seg})
+        child_style = dict(inherited)
+        child_style.update(_xiumi_style_attr(child["attrs"]))
+        blocks.extend(_xiumi_section_blocks(child_style, inner[child["inner_start"]:child["inner_end"]]))
+        prev = child["end"]
+    seg = _xiumi_flatten_inner_html(inner[prev:])
+    if _xiumi_segment_is_meaningful(seg):
+        blocks.append({"style": own_style, "text": seg})
+    return blocks
+
+
 def _xiumi_html_to_blocks(html_text: str) -> list[dict]:
-    """把设计稿 HTML 拆成 {style, text} 块：每个顶层 <section> 对应一个块。
+    """把源 HTML 拆成 {style, text} 块：每个有内容的 <section> 对应一个块。
 
     Xiumi 的粘贴处理器会剥掉颜色/背景/边框等行内样式；直接往模型的
     comps.items[].txt1.style（camelCase CSS）和 txt1.text（带行内样式的
     HTML）写这些样式，渲染层和保存都会原样保留（已验证）。
+
+    只取**顶层** section 是错的：万有的正文 HTML 只有一个顶层 <section>
+    包住整篇，那样整篇挤进一个 comp，所有卡片的 background/border/
+    borderRadius 从 comp 级掉进文本内部的行内样式，渲染出来就是无格式
+    正文（已复现：草稿 728521305 / 728521916，`style_aware_blocks count=1`
+    → `compCount=1`）。顶层 section 在这里只作为"页面外壳"把字体/底色/
+    文字颜色继承下去，真正的块下沉到栏目组和卡片一级。
     """
     m = re.search(r"<main[^>]*class=[\"']page[\"'][^>]*>([\s\S]*?)</main>", html_text, flags=re.I)
     frag = m.group(1) if m else html_text
 
-    tag_re = re.compile(r"<(/?)section\b[^>]*>", flags=re.I)
-    depth = 0
-    cur_start = None
-    cur_attrs = ""
+    children = _top_level_section_spans(frag)
+    if not children:
+        return [{"style": {}, "text": _xiumi_flatten_inner_html(frag) or "<p><br></p>"}]
+
     blocks = []
-    for tm in tag_re.finditer(frag):
-        if not tm.group(1):  # opening
-            if depth == 0:
-                cur_start = tm.end()
-                attrs_m = re.search(r"style=[\"']([^\"']*)[\"']", tm.group(0), flags=re.I)
-                cur_attrs = attrs_m.group(1) if attrs_m else ""
-            depth += 1
-        else:  # closing
-            depth -= 1
-            if depth == 0 and cur_start is not None:
-                inner = frag[cur_start:tm.start()]
-                text = _xiumi_flatten_inner_html(inner)
-                if not text:
-                    text = "<p><br></p>"
-                blocks.append({"style": _xiumi_camelize_css(cur_attrs), "text": text})
-                cur_start = None
+    prev = 0
+    for child in children:
+        seg = _xiumi_flatten_inner_html(frag[prev:child["start"]])
+        if _xiumi_segment_is_meaningful(seg):
+            blocks.append({"style": {}, "text": seg})
+        blocks.extend(
+            _xiumi_section_blocks(
+                _xiumi_style_attr(child["attrs"]),
+                frag[child["inner_start"]:child["inner_end"]],
+            )
+        )
+        prev = child["end"]
+    tail = _xiumi_flatten_inner_html(frag[prev:])
+    if _xiumi_segment_is_meaningful(tail):
+        blocks.append({"style": {}, "text": tail})
     return blocks
 
 
@@ -640,11 +778,17 @@ def _wait_for_manual_login(browser, timeout: int):
 
     print("秀米：正在自动检测登录状态，请在浏览器中完成登录。")
     deadline = time.time() + timeout
+    next_probe_log = time.time() + 30
     while time.time() < deadline:
         state = _xiumi_login_state(browser)
         if state.get("authenticated"):
             _log_xiumi_debug("xiumi_manual_login_confirmed", state=state)
             return True
+        # 每 30s 记一次中间状态：登录卡住时能直接看出卡在哪个页面、
+        # 页面上还有哪些登录入口（超时只有一条，看不出过程）。
+        if time.time() >= next_probe_log:
+            _log_xiumi_debug("xiumi_login_poll", state=state)
+            next_probe_log = time.time() + 30
         time.sleep(1)
     _log_xiumi_debug("xiumi_manual_login_timeout", state=_xiumi_login_state(browser))
     return False
@@ -2401,6 +2545,44 @@ return { ok: true, compCount: newComps.length };
     return ok
 
 
+def _probe_xiumi_render_styles(browser) -> dict:
+    """对比「模型里的样式」和「真正渲染出来的 DOM 里的样式」。
+
+    模型里 `txt1.style` / `txt1.text` 有样式、渲染层没有，说明是渲染层在丢；
+    两边都有却依然显示无格式，问题就在别处。排查「草稿没有格式」时先看这条。
+    """
+    try:
+        result = browser.execute_script(
+            """
+const out = { modelStyle: 0, modelComps: 0, domStyle: 0, domLen: 0 };
+const editable = Array.from(document.querySelectorAll('[contenteditable="true"]')).find(e => e.offsetWidth > 0);
+let scope = null, node = editable;
+while (node) {
+  try { const s = window.angular.element(node).scope(); if (s && s.cell) { scope = s; break; } } catch(e) {}
+  node = node.parentElement;
+}
+if (scope) {
+  const items = (scope._$.pages[0].layers[0].comps.items) || [];
+  out.modelComps = items.length;
+  for (const c of items) {
+    const t = (c.txt1 || {}).text || '';
+    out.modelStyle += t.split('style=').length - 1;
+    out.modelStyle += Object.keys((c.txt1 || {}).style || {}).length ? 1 : 0;
+  }
+}
+const boxes = Array.from(document.querySelectorAll('.tn-page-container, .tn-page-piece, [contenteditable="true"]'));
+let best = '';
+for (const b of boxes) { const h = b.innerHTML || ''; if (h.length > best.length) best = h; }
+out.domLen = best.length;
+out.domStyle = best.split('style=').length - 1;
+return out;
+"""
+        )
+    except Exception as exc:  # pragma: no cover - diagnostics only
+        return {"probe_error": str(exc)[:120]}
+    return result or {}
+
+
 def _fill_xiumi_body_style_aware(browser, content_html: str) -> tuple[dict, bool]:
     """按设计稿样式填充正文：seed 粘贴 + 直接构建 comps.items。"""
     print("秀米：正在按设计稿样式写入正文")
@@ -2415,6 +2597,8 @@ def _fill_xiumi_body_style_aware(browser, content_html: str) -> tuple[dict, bool
     if not ok:
         print("秀米：按样式构建失败，退回基础粘贴流程")
         return _fill_xiumi_body_then_images(browser, content_html, pathlib.Path("."), upload_probe=False)
+    time.sleep(2)
+    _log_xiumi_debug("xiumi_render_style_probe", **_probe_xiumi_render_styles(browser))
     dirty_state = _mark_xiumi_document_dirty(browser)
     _log_xiumi_debug("xiumi_dirty_state", **dirty_state)
     return {"status": "skipped", "uploaded": 0, "total": 0}, ok
@@ -2446,20 +2630,42 @@ return out;
     return [_normalize_xiumi_image_url(str(v)) for v in (values or []) if str(v or "").strip()]
 
 
-def _paste_image_get_cdn_url(browser, data_url: str) -> str:
+def _paste_image_get_cdn_url(browser, data_url: str, expected_size: int = 0, attempts: int = 3) -> str:
     """粘贴含 data URL 图片的片段，让秀米自动上传并返回 CDN 地址。
 
     data URL 直接写进文本 comp 保存后会被秀米剥离（已验证）；粘贴会触发秀米
     自己的图片上传转换，能拿到 img.xiumi.us 的持久化 URL。
+
+    只接受**粘贴之后新出现**的 CDN 地址。草稿里已有的图片会先被读到,直接取第一个
+    命中的话会把上一张图当成这一张 —— 9 张图只得到 5 个地址、后 4 张全是前面图片
+    的重复 URL(已验证 bug)。expected_size 是本地文件字节数,秀米保留原始字节,
+    所以 `-sz_<size>` 能进一步确认拿到的确实是这一张。
+
+    秀米上传偶发不返回结果(实测同一批里 2/9 会在窗口内拿不到新地址),因此等待窗口
+    放宽到 45s 并整体重试;重试比返回一张错图安全得多。
     """
+    before = {
+        src
+        for src in _read_xiumi_comp_image_srcs(browser)
+        if _looks_like_user_xiumi_image(src)
+    }
     probe = '<section><p>wanyou-image</p><img src="%s" style="width:60px;"><p>end</p></section>' % data_url
-    _paste_xiumi_html(browser, probe)
-    deadline = time.time() + 20
-    while time.time() < deadline:
-        for src in _read_xiumi_comp_image_srcs(browser):
-            if _looks_like_user_xiumi_image(src):
-                return src
-        time.sleep(1)
+    size_tag = "-sz_%d" % expected_size if expected_size > 0 else ""
+    first_new = ""
+    for _attempt in range(max(1, attempts)):
+        _paste_xiumi_html(browser, probe)
+        deadline = time.time() + 45
+        while time.time() < deadline:
+            for src in _read_xiumi_comp_image_srcs(browser):
+                if not _looks_like_user_xiumi_image(src) or src in before:
+                    continue
+                if size_tag and size_tag in src:
+                    return src
+                if not first_new:
+                    first_new = src
+            time.sleep(1)
+        if first_new:
+            return first_new
     return ""
 
 
@@ -2472,7 +2678,11 @@ def _fill_xiumi_body_style_aware_with_images(browser, content_html: str, asset_b
         if not candidate.exists():
             _log_xiumi_debug("xiumi_image_cdn_missing", src=src)
             continue
-        cdn = _paste_image_get_cdn_url(browser, _image_file_to_data_url(candidate))
+        cdn = _paste_image_get_cdn_url(
+            browser,
+            _image_file_to_data_url(candidate),
+            expected_size=candidate.stat().st_size,
+        )
         if cdn:
             content_html = content_html.replace('src="%s"' % src, 'src="%s"' % cdn)
             _log_xiumi_debug("xiumi_image_cdn_inline", src=src, cdn=cdn[:90])
