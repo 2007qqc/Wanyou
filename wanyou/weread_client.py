@@ -19,17 +19,14 @@
   还原成 ``_`` 才能拼出打得开的原文链接。
 """
 
-import base64
 import json
 import pathlib
 import re
 import shutil
 import subprocess
-import sys
 import time
 
 import config
-from wanyou import browser as browser_module
 
 BOOK_ID_PREFIX = "MP_WXS_"
 
@@ -97,22 +94,6 @@ ADD_TO_SHELF_JS = """
   }).then(function(r){ return r.text() }).then(function(t){ cb(t) })
     .catch(function(e){ cb("ERR:" + e) });
 """
-
-
-def biz_to_book_id(biz):
-    """公众号 ``__biz`` -> 微信读书 bookId。"""
-    raw = str(biz or "").strip()
-    if not raw:
-        raise WereadError("__biz 为空")
-    return BOOK_ID_PREFIX + base64.b64decode(raw).decode("utf-8")
-
-
-def book_id_to_biz(book_id):
-    """微信读书 bookId -> 公众号 ``__biz``。"""
-    suffix = str(book_id or "").strip()
-    if suffix.startswith(BOOK_ID_PREFIX):
-        suffix = suffix[len(BOOK_ID_PREFIX):]
-    return base64.b64encode(suffix.encode("utf-8")).decode("utf-8")
 
 
 def _chrome_candidates():
@@ -370,4 +351,6 @@ def collect_articles(days_limit=None, *, port=None, profile_dir=None, max_pages=
 
 
 if __name__ == "__main__":
-    sys.exit(0 if collect_articles() is not None else 1)
+    # 只做发现，不下正文，方便单独验证这条链路。
+    for entry in collect_articles():
+        print(entry["title"])
