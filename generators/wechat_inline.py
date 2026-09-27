@@ -1,7 +1,6 @@
 import html
 import os
 import re
-from pathlib import Path
 from typing import List, Tuple
 
 from generators.h5_generator import FOOTER_LINE, HEADER_SUBTITLE_LINE, HEADER_TITLE_LINE, SECTION_LEADS

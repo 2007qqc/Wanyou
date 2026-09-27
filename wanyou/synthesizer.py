@@ -1,14 +1,13 @@
 import datetime as dt
 import os
 import re
-from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Set
 
 import config
 from wanyou.prompt_preferences import KEEP_DROP_PREFERENCE_RULES
 from wanyou.utils_llm import chat_complete
 from wanyou.filter_debug import configure_filter_debug_from_markdown, log_filter_decision
-from wanyou.run_clock import effective_run_date, effective_run_datetime
+from wanyou.run_clock import effective_run_datetime
 from wanyou.temporal_filter import assess_temporal_relevance
 
 

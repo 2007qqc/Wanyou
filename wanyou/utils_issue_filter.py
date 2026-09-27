@@ -1,7 +1,6 @@
 import datetime as dt
 import os
 import re
-from pathlib import Path
 from typing import Optional, Set
 
 import config
