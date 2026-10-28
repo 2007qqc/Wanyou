@@ -1,6 +1,6 @@
 ---
 name: wanyou-richtext-export
-description: 把最终万有 Markdown 导出成 H5 HTML 与 browser-agent payload，不重跑爬虫或 LLM 筛选。需要验证排版、主题、富文本产物或 agent payload 生成时使用。
+description: 把最终万有 Markdown 导出成带「一键复制到公众号」按钮的 H5 HTML（图片自动内嵌）与 browser-agent payload，不重跑爬虫或 LLM 筛选。需要验证排版、主题、富文本产物或 agent payload 生成时使用。
 ---
 
 # 万有富文本导出
@@ -8,6 +8,10 @@ description: 把最终万有 Markdown 导出成 H5 HTML 与 browser-agent payloa
 ## 用途
 
 在最终 Markdown 已经存在之后使用。它从 Markdown 文件导出 H5 HTML 和可选的 browser-agent payload。
+
+导出的 H5 右下角带「复制到公众号」按钮：复制的是 `generators/wechat_inline.py` 生成的**全内联样式正文**，图片已由 `wanyou/inline_images.py` 压到最长边 900px 并转成 `data:` 内嵌，粘进**公众号后台**后样式和图片都在，**不需要先上传图片**。
+
+（秀米不吃这套：它的粘贴通道会剥掉行内样式，详见 `wanyou-to-xiumi`。）
 
 ## 命令
 

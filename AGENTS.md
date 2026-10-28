@@ -1,6 +1,6 @@
 # Wanyou Agents
 
-This repository is organized as an agent pipeline. Each stage can be debugged alone, and the full run can produce Markdown, ranked raw, H5 HTML, browser-agent payload, and optional Xiumi draft output in one command.
+This repository is organized as an agent pipeline. Each stage can be debugged alone, and the full run can produce Markdown, ranked raw, H5 HTML, browser-agent payload, and a Xiumi draft in one command. Two publish channels: the H5's copy button feeds the WeChat MP editor, and `--preserve-styles` feeds Xiumi (its paste handler strips every inline style, so the clipboard route cannot carry the design there).
 
 ## Pipeline Stages
 
@@ -39,15 +39,15 @@ Code: `wanyou/utils_html.py`, `wanyou/synthesizer.py`, `wanyou/utils_llm.py`
 Produces final deliverables:
 
 - **Markdown** — always generated.
-- **H5 HTML** — themed standalone page.
+- **H5 HTML** — themed standalone page. It carries a **一键复制** button (bottom-right): the clipboard receives the fully inline-styled body from `wechat_inline.py` (local images embedded as `data:` URIs, no `<a href>` so WeChat never rejects the paste), so one paste into the WeChat MP editor keeps every style. Xiumi is not a target for this button — see stage 5. This replaces the removed direct MP draft API.
 - **DOCX** — via pypandoc (requires `pandoc` installed).
 - **Browser Agent payload** — JSON for automated publishing.
 
 Code: `generators/h5_generator.py`, `generators/browser_agent.py`, `generators/wechat_inline.py`
 
-### 5. Xiumi Draft (optional)
+### 5. Xiumi Draft
 
-Pushes final content into a Xiumi editor draft:
+Pushes final content into a Xiumi editor draft. This is how Xiumi gets styled content at all: Xiumi's paste handler strips every inline style and merges adjacent paragraphs into one text component, so the clipboard route yields plain text there. `--preserve-styles` sidesteps paste by writing Xiumi's `comps.items` model directly.
 
 - Opens "My Xiumi" workspace, confirms login.
 - Creates a new graphic draft, writes text, uploads images, applies layout, and saves.

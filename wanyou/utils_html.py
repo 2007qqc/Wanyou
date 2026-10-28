@@ -190,7 +190,9 @@ def _strip_residual_markup(text):
     cleaned = re.sub(r"(?<!_)__([^_\n]+)__(?!_)", r"\1", cleaned)
     cleaned = re.sub(r"(?<!\*)\*([^*\n]+)\*(?!\*)", r"\1", cleaned)
     cleaned = re.sub(r"(?<!_)_([^_\n]+)_(?!_)", r"\1", cleaned)
-    cleaned = re.sub(r"\\([*_#`>\-])", r"\1", cleaned)
+    # 反斜杠转义：除了常见的 * _ # ` > -，正文里还有「1\. 测试项目」这种被
+    # html2text 转义的编号，不清掉会原样印在推送里
+    cleaned = re.sub(r"\\([\\`*{}\[\]()#+\-.!_>|~])", r"\1", cleaned)
     cleaned = re.sub(r"\n[ \t]+", "\n", cleaned)
     cleaned = re.sub(r"[ \t]+\n", "\n", cleaned)
     cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)

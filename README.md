@@ -2,11 +2,16 @@
 
 清华大学物理系“万有预报”自动生成项目。
 
-项目会抓取校内网站、公众号和物理系学术报告页面，经 LLM 筛选、压缩和排版后生成 Markdown、H5 HTML，并可自动保存到秀米草稿。当前支持 Windows 和 macOS。
+项目会抓取校内网站、公众号和物理系学术报告页面，经 LLM 筛选、压缩和排版后生成 Markdown 和 H5 HTML，并把成品同步成秀米草稿。两条发布通道各走各的：
+
+- **公众号** —— H5 右下角的「复制到公众号」按钮，复制全内联样式正文（含图片），粘进后台正文区即可；
+- **秀米** —— 必须走 `publish_xiumi_draft.py --preserve-styles`，因为秀米的粘贴通道会剥掉所有行内样式。
+
+当前支持 Windows 和 macOS。
 
 ## 用 wanyou-forecast 一次性全量生成万有预报
 
-`wanyou-forecast` 是本仓库内置的 Claude Code skill（位于 `skills/wanyou-forecast/`），作为**一次性全量生成**一期万有预报的入口：5 个来源模块（公众号、物理系学术报告、图书馆、新清华学堂、教务+家园网）由子代理**并行**爬取，随后合并 raw → LLM 打分排序并合成 → 导出 H5 → 自动保存到秀米草稿，一次跑通整条发布链路，无需手动分步执行。
+`wanyou-forecast` 是本仓库内置的 Claude Code skill（位于 `skills/wanyou-forecast/`），作为**一次性全量生成**一期万有预报的入口：5 个来源模块（公众号、物理系学术报告、图书馆、新清华学堂、教务+家园网）由子代理**并行**爬取，随后合并 raw → LLM 打分排序并合成 → 导出带一键复制按钮的 H5（给公众号）→ 推送秀米草稿（保住样式的那条路），一次跑通整条链路，无需手动分步执行。
 
 在 Claude Code 中调用：
 
@@ -257,29 +262,45 @@ python scripts/publish_xiumi_draft.py output/xxx/wanyou_xxx.html --markdown outp
 python scripts/run_wanyou_to_xiumi_draft.py --with-login --skip-docx --xiumi-profile-dir output/selenium_cache/my-xiumi-profile
 ```
 
-## 微信公众号草稿箱
+## 复制到秀米 / 公众号草稿
 
-项目仍保留直接保存到微信公众号草稿箱的预留功能。当前主线建议先走秀米草稿；公众号草稿接口适合后续需要直接对接公众号后台时使用。
+H5 页面右下角有一个「复制到公众号」按钮。它复制的不是页面上那份带 class 的 H5，而是由 `generators/wechat_inline.py` 生成的**全内联样式正文**——也就是公众号编辑器认的格式：
 
-已有 `.html + .md` 输出时：
+- 点一下 → 剪贴板里同时有 `text/html` 和 `text/plain`；
+- 到**公众号后台**正文区 Ctrl+V，段落、卡片、表格、配色都保留；
+- 不调用任何接口，不需要 AppID/AppSecret，也不需要后台配 IP 白名单。
 
-```bash
-python scripts/publish_wechat_draft.py output/xxx/wanyou_xxx.html --markdown output/xxx/wanyou_xxx.md --cover badge.png --title "万有预报"
-```
+浏览器没有 `navigator.clipboard` 时会自动回退到「选中隐藏容器 + `document.execCommand('copy')`」，结果一致。
 
-只构建并检查 payload，不调用微信接口：
+**正文里不出现 `<a href>`。** 公众号编辑器会把 `mp.weixin.qq.com` 的链接当成「图文消息」去校验归属，不是本号的推送就弹 **「请勿插入不合法的图文消息链接」**；外部链接本来也会被剥掉。所以 `链接` 字段一律渲染成纯文本（保留下划线和颜色，只是不可点）。改这一条之前，一期里 6 条公众号链接必然触发那个报错。
 
-```bash
-python scripts/publish_wechat_draft.py output/xxx/wanyou_xxx.html --markdown output/xxx/wanyou_xxx.md --cover badge.png --dry-run
-```
+**图片不需要先上传。** 导出时 `wanyou/inline_images.py` 会把正文里的本地图片读出来，最长边缩到 900px、照片转 JPEG，再以 `data:` URI 内嵌进复制源。实测一期 9.4 MB 原图压到 0.55 MB 左右；复制后 8 张图全部内联，`localImg = 0`，粘进编辑器即可显示。
 
-Windows 端也保留了一键脚本：
+只有两种情况会退回「需要手动补图」：单张图特别大/读失败，或者累计超过 6 MB 预算。这时按钮会在复制后提示「有 N 张本地图片需在编辑器里重新上传」——这个数字是运行时数出来的。
 
-```powershell
-powershell -ExecutionPolicy Bypass -File scripts\run_wanyou_to_wechat_draft.ps1 -WithLogin -SkipDocx -Cover badge.png
-```
+**底色统一成纯白。** 微信的深色模式会对「纯白」这类元素单独做反转：页面底色和卡片底色亮度不同时，就会出现「卡片变黑了、外面还亮着」的割裂（曾经真实发生过——卡片 `#fff` 被反转，页面 `#f6f2e8` 没有）。所以复制源里的背景色只剩两类：
 
-正式保存需要公众号官方后台的 AppID 和 AppSecret，并且公众号后台需要配置当前机器出口 IP 白名单。它们和用于抓取公众号文章的 `WECHAT_PUBLIC_API_KEY` 不是同一个 key。
+| 用途 | 取值 |
+| --- | --- |
+| 页面 / 卡片 / 表格容器 | `#ffffff`（全部同一个白） |
+| 点缀块（hero、要点透视、表头、斑马纹、页脚） | `rgba(245,200,51,α)` 黄染 |
+
+这样微信要么整体不动（全白），要么整体反转（全暗），内外永远一致。代价是公众号正文没有 H5 那种米色纸感——H5 仍然是米色设计，它只是预览页。
+
+### 秀米：粘贴通道保不住样式
+
+**这一点是平台行为，不是生成的 HTML 有问题。** 秀米编辑器的粘贴处理器会剥掉所有行内样式（只留 `text-align:justify`），并把相邻段落合并成一个文本组件——粘进去看起来就是「一整块纯文本」。本仓库的 `wanyou-forecast` skill 里早就记录了这个坑（见「秀米写入的坑」第 5 条）。
+
+所以要**带样式**进秀米，只有两条路：
+
+1. `python scripts/publish_xiumi_draft.py <html> --markdown <md> --preserve-styles` —— 绕过粘贴，直接写秀米的模型层（`comps.items`），设计样式完整保留。**这就是 `wanyou-forecast` 的阶段 6，流水线默认会跑**；
+2. 接受纯文本，粘进秀米后再手动套它的模板/样式。
+
+也就是说两条发布通道各有分工：**公众号走复制按钮，秀米走自动化脚本**，互不替代。
+
+公众号后台没有这个限制，粘贴保留内联样式。
+
+> 旧的「直接写公众号草稿箱」接口（`scripts/publish_wechat_draft.py`、`scripts/run_wanyou_to_wechat_draft.ps1`、`WECHAT_MP_APPID` / `WECHAT_MP_APPSECRET`）已经移除。它需要公众号后台 AppID/AppSecret 加出口 IP 白名单，维护成本高于一次复制粘贴。
 
 ## 单模块调试
 

@@ -1,6 +1,6 @@
 ---
 name: wanyou-full-run
-description: 端到端跑完整条万有流水线，产出 raw Markdown、ranked raw、最终 Markdown、H5 HTML、browser-agent payload，以及可选的秀米草稿。需要一条命令生成或调试完整万有流程时使用，尤其适合 public-only 冒烟运行和带登录来源的完整运行。
+description: 端到端跑完整条万有流水线，产出 raw Markdown、ranked raw、最终 Markdown、带「一键复制到公众号」按钮的 H5 HTML、browser-agent payload，以及秀米草稿（秀米只能靠 --preserve-styles 保样式）。需要一条命令生成或调试完整万有流程时使用，尤其适合 public-only 冒烟运行和带登录来源的完整运行。
 ---
 
 # 万有完整运行
@@ -10,7 +10,7 @@ description: 端到端跑完整条万有流水线，产出 raw Markdown、ranked
 1. 调试单个来源时，先用模块级运行（`scripts/run_wanyou_module.py`）。
 2. 冒烟测试和外部调试用 `--public-only`。
 3. 有校园网凭据时用 `--with-login`。
-4. 当前完整链路：来源页面与接口 → raw Markdown → LLM 打分排序的 ranked raw → 选题清洗后的最终 Markdown/HTML → 可选秀米草稿。
+4. 当前完整链路：来源页面与接口 → raw Markdown → LLM 打分排序的 ranked raw → 选题清洗后的最终 Markdown/HTML → **公众号用 H5 的一键复制按钮**；**秀米必须再跑一遍 `--preserve-styles`**（粘贴到秀米会掉样式）。
 5. 某个来源缺失时，先看 raw Markdown 路径。
 6. 改 prompt 或选题逻辑之前，先看 ranked raw。
 7. 送秀米之前，先打开 HTML 产物确认富文本渲染。

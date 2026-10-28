@@ -1,9 +1,11 @@
 ---
 name: wanyou-to-xiumi
-description: 一条命令从零跑到秀米草稿——跑完整个万有流水线并直接推送到秀米；也支持把已有的 .html/.md 产物单独发到秀米。需要产出成品秀米草稿时使用。
+description: 一条命令从零跑到秀米草稿——跑完整个万有流水线并直接推送到秀米；也支持把已有的 .html/.md 产物单独发到秀米。秀米编辑器的粘贴通道会剥掉行内样式，所以带样式的草稿只能靠本技能的 --preserve-styles 生成。
 ---
 
 # 万有 → 秀米草稿
+
+> **这是秀米唯一能保住样式的路。** 从剪贴板往秀米粘，它的 paste handler 会剥掉所有行内样式并把相邻段落合并成一个文本组件，结果就是一块纯文本。`publish_xiumi_draft.py --preserve-styles` 绕过粘贴、直接写模型层，设计样式才留得住。公众号那边不受影响，用 H5 的一键复制按钮即可。
 
 ## 用途
 
@@ -82,7 +84,7 @@ XIUMI_IMAGE_MAX_DIMENSION=1600
 
 编辑器是 Angular 应用。渲染层是 `comps.items`；用 `innerHTML=` 或 `scope.cell.text=` 注入的内容落进 `_qiBlock.items`（冻结层，能保存但永不渲染）。症状是保存成功、URL 能打开、正文一片空白。
 
-修复方式是**受信粘贴**：`navigator.clipboard.write([new ClipboardItem({'text/html': blob, 'text/plain': blob})])` → 聚焦 `[contenteditable]` → CDP `Input.dispatchKeyEvent` Ctrl+V（`modifiers:2, key:"v", code:"KeyV", windowsVirtualKeyCode:86`），让秀米自己的 paste handler 去构建渲染层组件。用 `/data/editing` 接口（或 `output/parse_verify.py`）验证内容在 `comps.items` 而不是 `_qiBlock`。
+修复方式是**受信粘贴**：`navigator.clipboard.write([new ClipboardItem({'text/html': blob, 'text/plain': blob})])` → 聚焦 `[contenteditable]` → CDP `Input.dispatchKeyEvent` Ctrl+V（`modifiers:2, key:"v", code:"KeyV", windowsVirtualKeyCode:86`），让秀米自己的 paste handler 去构建渲染层组件。用 `/data/editing` 接口验证内容在 `comps.items` 而不是 `_qiBlock`。
 
 ### CDP 前置条件
 

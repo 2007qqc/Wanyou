@@ -9,7 +9,7 @@ description: 用多 agent 并行抓取各来源，再整合、LLM 合成、导�
 
 用 Claude Code 的 Agent 工具并行跑各来源模块，再整合、合成、推送秀米。
 
-流程：并行抓取 → 合并 raw → LLM 打分与合成（含 ranked raw）→ 导出 H5 → 秀米草稿
+流程：并行抓取 → 合并 raw → LLM 打分与合成（含 ranked raw）→ 导出 H5（公众号用一键复制）→ 推送秀米草稿（秀米只能走这条路保样式）
 
 命令里的 `python` 一率用项目虚拟环境：`E:/StudentsUnion/Wanyou/.venv/Scripts/python.exe`（裸 `python` 在本机是微软商店占位程序，直接退 9009）。
 
@@ -80,9 +80,21 @@ python skills/wanyou-llm-filter/scripts/run_wanyou_llm_filter.py "$INTEGRATION_D
 python skills/wanyou-richtext-export/scripts/run_wanyou_richtext_export.py "$INTEGRATION_DIR/wanyou_combined.md" --skip-agent-payload --title "万有预报"
 ```
 
-记下打印的 `html_path:`。
+记下打印的 `html_path:`。这个 H5 右下角有一个「复制到公众号」按钮，点一下就把**全内联样式正文**送进剪贴板（`text/html` + `text/plain`），到公众号后台正文区 Ctrl+V，样式／卡片／表格／图片都跟着走。
+
+- 复制源由 `generators/wechat_inline.py` 生成，和手工粘进编辑器的是同一份；
+- 图片在导出时已压到最长边 900px 并转成 `data:` 内嵌（`wanyou/inline_images.py`），**不需要先把图上传到任何地方**；
+- 浏览器没有 `navigator.clipboard` 时自动回退到「选中隐藏容器 + `execCommand('copy')`」；
+- **正文里刻意不用 `<a href>`**：公众号编辑器会把 `mp.weixin.qq.com` 的链接当「图文消息」校验归属，不是本号的推送就弹「请勿插入不合法的图文消息链接」。`链接` 字段渲染成纯文本，下划线和颜色还在，只是不可点。
+- **底色只有两类**：页面/卡片/表格都是同一个 `#ffffff`，点缀块用 `rgba(245,200,51,α)` 黄染。微信深色模式会单独反转「纯白」元素，底色亮度不一致就会出现「卡片黑了、外面还亮」的割裂。别再引入 `#f6f2e8`、`#fffdf6` 这类近白——H5 可以用米色，复制源不行。
+
+这份 H5 服务的是**公众号**。秀米那一侧不靠它——理由见阶段 6。
 
 ### 阶段 6 —— 存成秀米草稿
+
+**默认要跑，不是可选项。** 秀米的粘贴处理器会剥掉所有行内样式、并把相邻段落合并成一个文本组件（见本文件后面「坑 5」），所以**剪贴板路线在秀米里必然只剩纯文本**。要拿到带样式的秀米草稿，只有 `publish_xiumi_draft.py --preserve-styles` 这一条路——它绕过粘贴，直接把样式写进秀米的 `comps.items` 模型层。
+
+用户说「秀米只能粘纯文本」时，不要以为是生成的 HTML 坏了，也不要去改内联样式，直接跑阶段 6。
 
 **先跑一遍 Markdown 预处理**，它会做三件推秀米必需的事（见 `scripts/prepare_xiumi_markdown.py` 的模块 docstring）：把内嵌 `data:` 图片落地成本地文件、把相对路径改成绝对路径、把被 Markdown 吃掉下划线的路径（`module_lib_20260927_0752` → `modulelib202609270752`）模糊匹配回真实文件。
 
@@ -119,7 +131,7 @@ python scripts/publish_xiumi_draft.py "$INTEGRATION_DIR/wanyou_combined.html" --
 
 秀米编辑器是 Angular 应用。渲染层是 `comps.items`；用 `innerHTML=` 或 `scope.cell.text=` 注入的内容落进 `_qiBlock.items`（冻结层，能保存但永不渲染）。症状是保存成功、URL 能打开、正文一片空白。
 
-修复方式是**受信粘贴**：`navigator.clipboard.write([new ClipboardItem({'text/html': blob, 'text/plain': blob})])` → 聚焦 `[contenteditable]` → CDP `Input.dispatchKeyEvent` Ctrl+V（`modifiers:2, key:"v", code:"KeyV", windowsVirtualKeyCode:86`），让秀米自己的 paste handler 去构建渲染层组件。用 `/data/editing` 接口（或 `output/parse_verify.py`）验证内容在 `comps.items` 而不是 `_qiBlock`。
+修复方式是**受信粘贴**：`navigator.clipboard.write([new ClipboardItem({'text/html': blob, 'text/plain': blob})])` → 聚焦 `[contenteditable]` → CDP `Input.dispatchKeyEvent` Ctrl+V（`modifiers:2, key:"v", code:"KeyV", windowsVirtualKeyCode:86`），让秀米自己的 paste handler 去构建渲染层组件。用 `/data/editing` 接口验证内容在 `comps.items` 而不是 `_qiBlock`。
 
 ### 2. CDP 前置条件
 
