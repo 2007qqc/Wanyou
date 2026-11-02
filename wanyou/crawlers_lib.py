@@ -10,7 +10,7 @@ import config
 from wanyou.decider import resolve_copy_decision
 from wanyou.filter_debug import log_filter_decision
 from wanyou.utils_html import html_to_markdown, save_content
-from wanyou.utils_issue_filter import load_previous_titles, seen_in_previous_issue
+from wanyou.utils_issue_filter import published_in_current_window
 from wanyou.utils_web import build_requests_session, make_browser
 
 
@@ -83,7 +83,6 @@ return "";
 
 
 def crawl_lib(doc, base_images_dir):
-    previous_titles = load_previous_titles()
     browser = make_browser()
     browser.get(config.URL_LIB_NOTICE)
     session = build_requests_session(browser)
@@ -110,8 +109,8 @@ def crawl_lib(doc, base_images_dir):
             time_label = class_info.find_element(By.CLASS_NAME, "date")
             date = time_label.text
             date = f"{date[-11:-7]}-{date[-6:-4]}-{date[-3:-1]}"
-            if seen_in_previous_issue(title, previous_titles):
-                log_filter_decision(section="lib_notice", title=title, status="dropped", reason="previous_issue", stage="crawler_lib_notice", date=date, url=browser.current_url)
+            if not published_in_current_window(date):
+                log_filter_decision(section="lib_notice", title=title, status="dropped", reason="published_before_window", stage="crawler_lib_notice", date=date, url=browser.current_url)
                 browser.back(); continue
             if (not getattr(config, "RAW_COLLECTION_MODE", False)) and any(sub in title for sub in config.LIB_NO_CONSIDER):
                 log_filter_decision(section="lib_notice", title=title, status="dropped", reason="site_blacklist", stage="crawler_lib_notice", date=date, url=browser.current_url)
@@ -183,9 +182,6 @@ def crawl_lib(doc, base_images_dir):
             if len(month_day) >= 2 and year:
                 month, day = month_day[:2]
                 date = f"{year}-{month.zfill(2)}-{day.zfill(2)}"
-            if seen_in_previous_issue(title, previous_titles):
-                log_filter_decision(section="lib_event", title=title, status="dropped", reason="previous_issue", stage="crawler_lib_event", date=date, url=browser.current_url)
-                browser.back(); continue
             if getattr(config, "RAW_COLLECTION_MODE", False) or resolve_copy_decision("lib_event", title, date):
                 container = WebDriverWait(browser, config.WAIT_TIMEOUT).until(EC.presence_of_element_located((By.CSS_SELECTOR, "div.material-value.editor-width")))
                 titles.append(title)

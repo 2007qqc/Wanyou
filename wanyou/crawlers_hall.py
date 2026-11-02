@@ -8,7 +8,6 @@ from selenium.webdriver.common.by import By
 
 import config
 from wanyou.filter_debug import log_filter_decision
-from wanyou.utils_issue_filter import load_previous_titles, seen_in_previous_issue
 from wanyou.utils_web import make_browser
 
 
@@ -49,7 +48,6 @@ def crawl_hall(doc, filename_jpg, base_images_dir):
 
     result_refined = []
     titles = []
-    previous_titles = load_previous_titles()
     keep_images = (
         not getattr(config, "RAW_COLLECTION_MODE", False)
         or bool(getattr(config, "RAW_COLLECTION_KEEP_IMAGES", True))
@@ -63,9 +61,6 @@ def crawl_hall(doc, filename_jpg, base_images_dir):
             continue
         if (not getattr(config, "RAW_COLLECTION_MODE", False)) and item["title"] in config.HALL_NO_CONSIDER:
             log_filter_decision(section="hall", title=item["title"], status="dropped", reason="site_blacklist", stage="crawler_hall_refine", date=item.get("date", ""))
-            continue
-        if seen_in_previous_issue(item["title"], previous_titles):
-            log_filter_decision(section="hall", title=item["title"], status="dropped", reason="previous_issue", stage="crawler_hall_refine", date=item.get("date", ""))
             continue
         path = ""
         if keep_images:

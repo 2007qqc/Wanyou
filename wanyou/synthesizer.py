@@ -1,9 +1,10 @@
 import datetime as dt
 import os
 import re
-from typing import Dict, Iterable, List, Optional, Set
+from typing import Iterable, List, Optional
 
 import config
+from wanyou.markdown_document import parse_markdown_document
 from wanyou.prompt_preferences import KEEP_DROP_PREFERENCE_RULES
 from wanyou.utils_llm import chat_complete
 from wanyou.filter_debug import configure_filter_debug_from_markdown, log_filter_decision
@@ -17,44 +18,9 @@ NOW = effective_run_datetime()
 PHYSICS_SECTION = "物理系学术报告"
 
 
-def parse_markdown_document(markdown_text: str) -> List[dict]:
-    sections = []
-    current_section = None
-    current_item = None
-
-    for raw_line in markdown_text.splitlines():
-        line = raw_line.rstrip()
-        if line.startswith("# "):
-            if current_item and current_section is not None:
-                current_section["items"].append(current_item)
-                current_item = None
-            if current_section is not None:
-                sections.append(current_section)
-            current_section = {"title": line[2:].strip(), "items": []}
-            continue
-
-        if line.startswith("## "):
-            if current_section is None:
-                current_section = {"title": "未分类", "items": []}
-            if current_item is not None:
-                current_section["items"].append(current_item)
-            current_item = {"title": line[3:].strip(), "body_lines": []}
-            continue
-
-        if current_item is not None:
-            current_item["body_lines"].append(raw_line)
-
-    if current_item and current_section is not None:
-        current_section["items"].append(current_item)
-    if current_section is not None:
-        sections.append(current_section)
-    return sections
-
-
 def build_augmented_markdown(markdown_text: str, current_markdown_path: str = "") -> str:
     configure_filter_debug_from_markdown(current_markdown_path)
     rendered_sections = []
-    previous_report_index = {}
     trust_selected_raw = "_todo_selected_raw" in os.path.basename(current_markdown_path or "")
 
     for section in parse_markdown_document(markdown_text):
@@ -71,9 +37,7 @@ def build_augmented_markdown(markdown_text: str, current_markdown_path: str = ""
                 }
             )
 
-        items = _remove_previous_issue_items(section_name, items, previous_report_index)
-        if not trust_selected_raw:
-            items = _filter_temporal_items(section_name, items)
+        items = _filter_temporal_items(section_name, items) if not trust_selected_raw else items
         items = _filter_section_items(section_name, items)
         for item in items:
             log_filter_decision(
@@ -87,7 +51,9 @@ def build_augmented_markdown(markdown_text: str, current_markdown_path: str = ""
         enriched = _enrich_items(section_name, items)
         transition = _generate_transition(section_name, [item.get("summary", "") for item in enriched], bool(enriched))
 
-        parts = [f"# {section_name}", "", transition, ""]
+        parts = [f"# {section_name}", ""]
+        if transition:
+            parts += [transition, ""]
         for item in enriched:
             parts.append(f"## {item['title']}")
             parts.append("")
@@ -100,33 +66,6 @@ def build_augmented_markdown(markdown_text: str, current_markdown_path: str = ""
         rendered_sections.append("\n".join(parts).strip())
 
     return "\n\n".join(section for section in rendered_sections if section).strip() + "\n"
-
-
-def _load_previous_report_index(current_markdown_path: str) -> Dict[str, Set[str]]:
-    _ = current_markdown_path
-    return {}
-
-
-def _extract_report_timestamp_from_path(path_text: str) -> Optional[dt.datetime]:
-    basename = os.path.basename(path_text or "")
-    match = re.match(rf"{re.escape(getattr(config, 'OUTPUT_NAME_PREFIX', 'wanyou'))}_(\d{{8}}_\d{{4}})(?:_raw)?\.md$", basename)
-    if not match:
-        return None
-    try:
-        return dt.datetime.strptime(match.group(1), "%Y%m%d_%H%M")
-    except Exception:
-        return None
-
-
-def _normalize_title_key(title: str) -> str:
-    cleaned = re.sub(r"\s+", "", title or "")
-    cleaned = re.sub(r"[\[\](){}，,：:|?/\\\-]", "", cleaned)
-    return cleaned.lower().strip()
-
-
-def _remove_previous_issue_items(section_name: str, items: List[dict], previous_report_index: Dict[str, Set[str]]) -> List[dict]:
-    _ = section_name, previous_report_index
-    return items
 
 
 def _filter_temporal_items(section_name: str, items: List[dict]) -> List[dict]:
@@ -329,12 +268,69 @@ def _select_items_with_llm(section_name: str, items: List[dict], limit: int) -> 
     return selected[:limit]
 
 
+_LEDE_META_RE = re.compile(
+    r"[^。；！？]*?(?:未注明|未提及|未交代|未见说明|材料未|来源为|日期显示为|标注日期为)[^。；！？]*[。；！？]?"
+)
+
+
+def _tidy_lede(text: str, limit: int) -> str:
+    """要点透视收尾：去掉编者视角的话，按整句收住，不要截成半句。
+
+    公众号条目的正文里已经有 100 字左右的长摘要，要点透视再写 90 字两者就撞脸，
+    所以带「来源公众号」的条目取摘要的第一句，长度控制在 45 字上下。
+    """
+    cleaned = _LEDE_META_RE.sub("", text or "").strip()
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    if len(cleaned) <= limit:
+        return cleaned
+
+    sentences = [part for part in re.split(r"(?<=[。；！？])", cleaned) if part.strip()]
+    if sentences and len(sentences[0]) <= limit + 15:
+        return sentences[0].strip()
+
+    # 单句仍然太长：退到逗号处收住，补句号，绝不切在半句中间
+    head = cleaned[: limit + 15]
+    cut = max(head.rfind("，"), head.rfind("；"), head.rfind("、"))
+    if cut >= limit * 0.5:
+        return head[:cut].rstrip("，；、") + "。"
+    return cleaned[:limit].rstrip("，；、") + "。"
+
+
+def _norm_text(text: str) -> str:
+    return re.sub(r"[\s\u3000，。；：、！？“”\"'（）()—\-·｜|]", "", text or "")
+
+
+def _wechat_lede_from_digest(content: str, limit: int = 45) -> str:
+    match = re.search(r"^摘要[:：]\s*(.+)$", content or "", re.MULTILINE)
+    if not match:
+        return ""
+    return _tidy_lede(match.group(1).strip(), limit)
+
+
 def _enrich_items(section_name: str, items: List[dict]) -> List[dict]:
     enriched = []
     for item in items:
         copied = dict(item)
-        copied["summary"] = _summarize_item(copied)
-        copied["content"] = _clean_text(copied.get("content", ""))
+        content = copied.get("content") or ""
+        # 允许在选稿里手写「要点透视: …」把这一条的导语钉死（默认还是模型概括）。
+        # 有些原文一开头就是已经过去的事（图书馆那条先讲中秋、国庆），模型照着写
+        # 就会把过期信息放到最显眼的位置。
+        pinned = re.search(r"^要点透视[:：]\s*(.+)$", content, re.MULTILINE)
+        if pinned:
+            content = re.sub(r"^要点透视[:：].*$\n?", "", content, count=1, flags=re.MULTILINE)
+        washed = _clean_text(content)
+        if pinned:
+            copied["summary"] = pinned.group(1).strip()
+        elif "来源公众号" in content:
+            # 公众号条目：要点透视用摘要的第一句，摘要本身保持完整，两者不再重复
+            copied["summary"] = _wechat_lede_from_digest(washed, 45)
+        if not copied.get("summary"):
+            copied["summary"] = _tidy_lede(_summarize_item(copied), 90)
+        # 要点透视只是把标题又说一遍的（「推广｜项目信息 …」这种只有标题的推送），
+        # 干脆不输出——卡片标题已经写了，再来一遍就是废话。
+        if _norm_text(copied.get("summary", "")) and _norm_text(copied["summary"]) in _norm_text(item.get("title", "")):
+            copied["summary"] = ""
+        copied["content"] = washed
         enriched.append(copied)
     return enriched
 
@@ -405,4 +401,8 @@ def _generate_transition(section_name: str, summaries: Iterable[str], has_items:
     defaults = getattr(config, "SECTION_DEFAULT_TRANSITIONS", {})
     if not has_items:
         return defaults.get("EMPTY", "本周暂无相关信息。")
-    return defaults.get(section_name, "下面来看看本周值得关注的内容。")
+    # 有内容的栏目不再写导语。之前按栏目硬编码的过渡句（「这周教务安排里有几条和课程
+    # 节奏直接相关」「天气渐暖，楼里的讲座也慢慢热闹起来了」）每期都一样，和卡片标题
+    # 重复，还常和当期事实矛盾（十月写「渐暖」）。栏目头（本期栏目 + 标题）已经把
+    # 「这是什么栏目」说清楚了，导语只在显式开启 LLM_TRANSITION_ENABLED 时保留。
+    return ""

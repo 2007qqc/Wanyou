@@ -9,7 +9,7 @@ from selenium.webdriver.common.by import By
 import config
 from wanyou.decider import resolve_copy_decision
 from wanyou.filter_debug import log_filter_decision
-from wanyou.utils_issue_filter import current_issue_cutoff, load_previous_titles, seen_in_previous_issue, should_skip_by_time
+from wanyou.utils_issue_filter import current_issue_cutoff, should_skip_by_time
 from wanyou.utils_html import save_content
 from wanyou.utils_llm import chat_complete
 from wanyou.utils_web import build_requests_session, make_browser
@@ -202,8 +202,7 @@ def _build_report_body(title: str, publish_date: str, detail_url: str, cleaned_t
     original_summary = _extract_original_report_summary(cleaned_text)
 
     body = []
-    if publish_date:
-        body.append(f"发布日期: {publish_date}")
+    # 学术报告卡片只保留“报告时间”，不写页面发布日期：读者关心的是什么时候开讲。
     if event_time:
         body.append(f"报告时间: {event_time}")
     if location:
@@ -217,9 +216,24 @@ def _build_report_body(title: str, publish_date: str, detail_url: str, cleaned_t
     elif summary:
         body.append(f"报告摘要：{summary}")
     else:
-        body.append(cleaned_text[:1800])
+        body.append(_trim_summary(cleaned_text))
 
     return final_title, "\n\n".join(body).strip()
+
+
+def _trim_summary(text: str, limit: int = 6000) -> str:
+    """按整句收尾，不要切在字符中间。
+
+    以前这里一律 `[:1800]`，英文摘要正好停在「…energy landsc」这种半个单词上，
+    读者看到的就是「摘要没显示全」。物理系报告的英文摘要常见 2000–3500 字符，
+    上限放宽到 6000，真要截也只截在句号处。
+    """
+    text = (text or "").strip()
+    if len(text) <= limit:
+        return text
+    head = text[:limit]
+    cut = max(head.rfind("。"), head.rfind(". "), head.rfind("\n"))
+    return (head[: cut + 1] if cut > limit * 0.6 else head).strip()
 
 
 def _extract_original_report_summary(text: str) -> str:
@@ -240,7 +254,7 @@ def _extract_original_report_summary(text: str) -> str:
         flags=re.M,
     )[0].strip()
     summary = re.sub(r"\n{3,}", "\n\n", summary)
-    return summary[:1800].strip()
+    return _trim_summary(summary)
 
 
 def _extract_original_field(text: str, labels: list[str]) -> str:
@@ -405,7 +419,6 @@ def _extract_list_date_from_link(link) -> str:
 
 def crawl_physics(doc, _base_images_dir):
     cutoff = current_issue_cutoff()
-    previous_titles = load_previous_titles()
     browser = make_browser()
     titles = []
     full_texts = []
@@ -431,9 +444,6 @@ def crawl_physics(doc, _base_images_dir):
                     log_filter_decision(section="physics", title=title, status="dropped", reason="not_report_like", stage="crawler_physics", date=list_date, url=href)
                     continue
                 log_filter_decision(section="physics", title=title, status="found", reason="list_item", stage="crawler_physics", date=list_date, url=href)
-                if seen_in_previous_issue(title, previous_titles):
-                    log_filter_decision(section="physics", title=title, status="dropped", reason="previous_issue", stage="crawler_physics", date=list_date, url=href)
-                    continue
                 if list_date and should_skip_by_time(list_date, cutoff):
                     log_filter_decision(section="physics", title=title, status="found", reason="list_date_older_than_cutoff_but_detail_checked", stage="crawler_physics", date=list_date, url=href)
 
@@ -459,9 +469,6 @@ def crawl_physics(doc, _base_images_dir):
                 publish_date = _extract_publish_date(title, cleaned_text or content_text)
                 if publish_date and should_skip_by_time(publish_date, cutoff):
                     log_filter_decision(section="physics", title=title, status="found", reason="publish_date_older_than_cutoff_but_report_time_checked", stage="crawler_physics_detail", date=publish_date, url=detail_url)
-                if seen_in_previous_issue(title, previous_titles):
-                    log_filter_decision(section="physics", title=title, status="dropped", reason="previous_issue", stage="crawler_physics_detail", date=publish_date, url=detail_url)
-                    continue
 
                 location_hit = any(
                     keyword.lower() in (content_text or "").lower()

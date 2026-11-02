@@ -131,17 +131,6 @@ def _extract_text(content: Any) -> str:
     return ""
 
 
-def _parse_decision(text: str) -> Optional[bool]:
-    if not text:
-        return None
-    head = text.strip().upper()
-    if head.startswith("YES"):
-        return True
-    if head.startswith("NO"):
-        return False
-    return None
-
-
 def _log_payload(payload: dict):
     if not config.LLM_LOG_PATH:
         return
@@ -417,13 +406,3 @@ def multimodal_complete(
             }
         )
     return content or None
-
-
-def llm_decide_yes_no(context: str) -> Optional[bool]:
-    content = chat_complete(
-        config.LLM_SYSTEM_PROMPT,
-        context,
-        temperature=0,
-        task_label="\u6b63\u5728\u5224\u65ad\u6761\u76ee\u662f\u5426\u4fdd\u7559",
-    )
-    return _parse_decision(content or "")

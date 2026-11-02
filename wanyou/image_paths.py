@@ -27,7 +27,11 @@ def clean_markdown_image_target(src: str) -> str:
     # html2text may emit Windows paths as doubled backslashes and may escape
     # underscores in Markdown URLs. Normalize both before path probing.
     cleaned = cleaned.replace("\\/", "/")
-    cleaned = re.sub(r"\\([_])", r"\1", cleaned)
+    # 绝对 Windows 路径里的 `\_` 是目录分隔符，不是 Markdown 转义；去掉它就变成
+    # `images_wanyou_...` 这种断图路径（秀米推草稿踩过）。只在非 Windows 路径里
+    # 去掉转义的反斜杠。
+    if not re.match(r"^[A-Za-z]:[\\/]", cleaned):
+        cleaned = re.sub(r"\\([_])", r"\1", cleaned)
     cleaned = re.sub(r"[\\/]+", lambda _match: os.sep, cleaned)
     return cleaned
 

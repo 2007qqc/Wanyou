@@ -252,11 +252,6 @@ def resolve_fakeids(session, timeout):
     return resolved
 
 
-def resolve_fakeid(session, timeout):
-    resolved = resolve_fakeids(session, timeout)
-    return resolved[0]["fakeid"]
-
-
 def _normalize_article_item(raw, account_keyword=""):
     title = _first_value(raw, "title", "name") or "N/A"
     url = normalize_url(_first_value(raw, "url", "link", "content_url"))
@@ -379,6 +374,11 @@ def dedupe_items(items):
             key = f"{mid}:{idx}"
         else:
             key = canonicalize_url_for_dedupe(item.get("url", ""))
+        if not key:
+            # weread 拿不到原文链接时 url 是空的，这里不能直接当「重复」丢掉，
+            # 否则整批条目会被清空（实测 70 条全灭）。退化成标题+发布时间去重。
+            title = (item.get("title") or "").strip()
+            key = f"{title}|{item.get('timestamp') or ''}" if title else ""
         if not key or key in seen:
             continue
         seen.add(key)
