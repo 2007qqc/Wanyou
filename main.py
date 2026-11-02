@@ -17,6 +17,7 @@ from wanyou.synthesizer import build_augmented_markdown
 from wanyou.unified_auth import authenticate_shared_browser
 from wanyou.utils_auth import prompt_credentials
 from wanyou.utils_html import clean_markdown_document_with_llm
+from wanyou.wechat_brief import enrich_wechat_briefs_in_markdown
 from wanyou.wechat_pipeline import collect_wechat_items, write_sectioned_md_stream
 
 
@@ -321,6 +322,8 @@ def run_pipeline(
 
         print("正在按 README TODO 标准选取各版块 3-5 条核心信息...")
         selected_raw_markdown = build_selected_raw_markdown_from_ranked(ranked_markdown)
+        print("正在为入选公众号条目补要点透视与摘要...")
+        selected_raw_markdown = enrich_wechat_briefs_in_markdown(selected_raw_markdown)
         with open(todo_selected_raw_path, "w", encoding="utf-8") as f:
             f.write(selected_raw_markdown)
 

@@ -12,7 +12,7 @@ from wanyou.decider import resolve_copy_decision
 from wanyou.filter_debug import log_filter_decision
 from wanyou.unified_auth import authenticate_shared_browser
 from wanyou.utils_html import html_to_markdown, save_content
-from wanyou.utils_issue_filter import load_previous_titles, seen_in_previous_issue
+from wanyou.utils_issue_filter import published_in_current_window
 from wanyou.utils_ocr import convert_markdown_images_to_text
 from wanyou.utils_web import build_requests_session, dump_browser_snapshot, open_in_new_tab
 
@@ -126,7 +126,6 @@ def crawl_myhome(doc, base_images_dir, username="", password="", browser=None):
             dump_browser_snapshot(browser, debug_dir, "myhome_no_notice_links")
             raise RuntimeError("家园网页未发现通知入口，可能是登录未生效或页面结构已变更")
 
-        previous_titles = load_previous_titles()
         seen_urls = set()
         web = browser.window_handles[0]
         time.sleep(1)
@@ -149,8 +148,8 @@ def crawl_myhome(doc, base_images_dir, username="", password="", browser=None):
                 seen_urls, browser = open_in_new_tab(url, seen_urls, browser, web)
                 date = _extract_detail_date(browser)
                 title = _extract_detail_title(browser)
-                if seen_in_previous_issue(title, previous_titles):
-                    log_filter_decision(section="myhome", title=title, status="dropped", reason="previous_issue", stage="crawler_myhome_detail", date=date, url=browser.current_url)
+                if not published_in_current_window(date):
+                    log_filter_decision(section="myhome", title=title, status="dropped", reason="published_before_window", stage="crawler_myhome_detail", date=date, url=browser.current_url)
                     browser.close(); browser.switch_to.window(web); continue
                 if (not getattr(config, "RAW_COLLECTION_MODE", False)) and any(sub in title for sub in config.MYHOME_NO_CONSIDER):
                     log_filter_decision(section="myhome", title=title, status="dropped", reason="site_blacklist", stage="crawler_myhome_detail", date=date, url=browser.current_url)

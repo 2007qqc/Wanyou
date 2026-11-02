@@ -1,7 +1,6 @@
 import datetime as dt
-import os
 import re
-from typing import Optional, Set
+from typing import Optional
 
 import config
 from wanyou.run_clock import effective_run_date, effective_run_datetime
@@ -16,7 +15,6 @@ def current_issue_cutoff(now: Optional[dt.datetime] = None) -> dt.datetime:
     current = effective_run_datetime(now)
     cutoff = current - dt.timedelta(days=7)
     return cutoff.replace(second=0, microsecond=0)
-
 
 
 def parse_datetime_text(text: str) -> Optional[dt.datetime]:
@@ -61,33 +59,17 @@ def should_skip_by_time(date_text: str, cutoff: Optional[dt.datetime] = None) ->
     return parsed < (cutoff or current_issue_cutoff())
 
 
+def published_in_current_window(date_text: str, window_start: Optional[dt.date] = None) -> bool:
+    """公告是否在「本期覆盖窗口」内发布（窗口首日 = WANYOU_RUN_DATE）。
 
-def load_previous_titles(current_markdown_path: str = "") -> Set[str]:
-    _ = current_markdown_path
-    return set()
-
-
-def seen_in_previous_issue(title: str, previous_titles: Set[str]) -> bool:
-    _ = title, previous_titles
-    return False
-
-
-def normalize_title_key(title: str) -> str:
-    cleaned = re.sub(r"\s+", "", title or "")
-    cleaned = re.sub(r"[\[\](){}、，,：:\|?/\\\-]", "", cleaned)
-    return cleaned.lower().strip()
-
-
-
-def _extract_report_timestamp(path_text: str) -> Optional[dt.datetime]:
-    basename = os.path.basename(path_text or "")
-    match = re.match(rf"{re.escape(getattr(config, 'OUTPUT_NAME_PREFIX', 'wanyou'))}_(\d{{8}}_\d{{4}})(?:_raw)?\.md$", basename)
-    if not match:
-        return None
-    try:
-        return dt.datetime.strptime(match.group(1), "%Y%m%d_%H%M")
-    except Exception:
-        return None
+    往期报纸已经登过的公告（如开学初的宿舍熄灯通知）不再重复选入；只有本期
+    窗口内发布的公告才进入候选。解析不出日期时保守放行。
+    """
+    parsed = parse_datetime_text(date_text)
+    if parsed is None:
+        return True
+    start = window_start or effective_run_date()
+    return parsed.date() >= start
 
 
 

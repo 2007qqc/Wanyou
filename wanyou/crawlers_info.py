@@ -12,7 +12,7 @@ from wanyou.decider import resolve_copy_decision
 from wanyou.filter_debug import log_filter_decision
 from wanyou.unified_auth import authenticate_shared_browser
 from wanyou.utils_html import html_to_markdown, save_content
-from wanyou.utils_issue_filter import load_previous_titles, seen_in_previous_issue
+from wanyou.utils_issue_filter import published_in_current_window
 from wanyou.utils_llm import chat_complete
 from wanyou.utils_web import build_requests_session, dump_browser_snapshot, open_in_new_tab
 
@@ -154,7 +154,6 @@ def _write_info_llm_hint(debug_dir, browser, session):
             f.write(result)
 
 def _collect_info_items(browser, session, base_images_dir, title_filter=None):
-    previous_titles = load_previous_titles()
     seen_urls = set()
     web = browser.window_handles[0]
     titles = []
@@ -169,15 +168,12 @@ def _collect_info_items(browser, session, base_images_dir, title_filter=None):
             if url in seen_urls:
                 log_filter_decision(section="info", title=list_title, status="dropped", reason="duplicate_url", stage="crawler_info", url=url)
                 continue
-            if list_title and seen_in_previous_issue(list_title, previous_titles):
-                log_filter_decision(section="info", title=list_title, status="dropped", reason="previous_issue", stage="crawler_info", url=url)
-                continue
             seen_urls, browser = open_in_new_tab(url, seen_urls, browser, web)
             time.sleep(2)
             date = _extract_detail_date(browser)
             title = _extract_detail_title(browser)
-            if seen_in_previous_issue(title, previous_titles):
-                log_filter_decision(section="info", title=title, status="dropped", reason="previous_issue", stage="crawler_info_detail", date=date, url=browser.current_url)
+            if not published_in_current_window(date):
+                log_filter_decision(section="info", title=title, status="dropped", reason="published_before_window", stage="crawler_info_detail", date=date, url=browser.current_url)
                 browser.close(); browser.switch_to.window(web); continue
             if (not getattr(config, "RAW_COLLECTION_MODE", False)) and title_filter and not title_filter(title):
                 log_filter_decision(section="info", title=title, status="dropped", reason="title_filter", stage="crawler_info_detail", date=date, url=browser.current_url)

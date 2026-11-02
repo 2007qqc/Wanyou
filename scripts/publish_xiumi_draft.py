@@ -469,6 +469,60 @@ def _xiumi_camelize_css(css_text: str) -> dict:
     return out
 
 
+_XIUMI_P_TAG_RE = re.compile(r"<(/?)p\b([^>]*?)(/?)>", flags=re.I)
+
+
+def _xiumi_display_block_attrs(attrs: str) -> str:
+    """给 span 的属性补上 display:block，让它在 <p> 里也独占一行。"""
+    attrs = attrs or ""
+    style = _xiumi_extract_style_attr(attrs)
+    if not style:
+        return f'{attrs} style="display:block;"'
+    return _XIUMI_STYLE_ATTR_RE.sub(
+        lambda _m: f'style="display:block;{style}"',
+        attrs,
+        count=1,
+    )
+
+
+def _xiumi_demote_nested_paragraphs(fragment: str) -> str:
+    """把 <p> 里的 <p> 降级成 display:block 的 <span>。
+
+    HTML 不允许 <p> 嵌套 <p>：浏览器解析时会在内层 <p> 处**闭合外层**，于是带
+    背景/边框的框（万有的「要点透视」红框就是 padding + border-left 的 <p>）渲染成
+    一个空框，框里的文字整段掉到框外。秀米存的是 HTML 片段，渲染时同样按 HTML 规则
+    解析，所以这个坑在秀米草稿里会原样复现。降级成块级 span 后结构合法，框和文字
+    都留在原位。
+    """
+    out = []
+    depth = 0
+    pos = 0
+    for match in _XIUMI_P_TAG_RE.finditer(fragment or ""):
+        out.append(fragment[pos:match.start()])
+        closing, attrs, self_closing = match.group(1), match.group(2), match.group(3)
+        if closing:
+            if depth > 0:
+                depth -= 1
+                # 先减再判：减到 0 说明关的是最外层，必须还原本来的 </p>；
+                # 否则关的是降级出来的 span。（这里曾经写成「深度>0 就输出
+                # </span>」，结果连最外层 </p> 也被换成 </span>，整块 p 全部
+                # 失去闭合标签。）
+                out.append("</p>" if depth == 0 else "</span>")
+            else:
+                out.append("</p>")
+        elif self_closing:
+            out.append(match.group(0))
+        elif depth == 0:
+            depth = 1
+            out.append(f"<p{attrs}>")
+        else:
+            depth += 1
+            out.append(f"<span{_xiumi_display_block_attrs(attrs)}>")
+        pos = match.end()
+    out.append(fragment[pos:])
+    return "".join(out)
+
+
 def _xiumi_flatten_inner_html(inner: str) -> str:
     """把嵌套 section/div 转成 <p>（保留其 style），只留 p/span/br/strong 与文本。
 
@@ -491,7 +545,8 @@ def _xiumi_flatten_inner_html(inner: str) -> str:
     html = re.sub(r"</div>", "</p>", html, flags=re.I)
     html = _XIUMI_WS.sub(" ", html)
     html = re.sub(r"<p>\s*</p>", "", html)
-    return html.strip()
+    # 收尾再降级一次：上面把 section/div 也转成了 <p>，可能造出新的嵌套。
+    return _xiumi_demote_nested_paragraphs(html.strip())
 
 
 _XIUMI_SECTION_TAG_RE = re.compile(r"<(/?)section\b([^>]*?)(/?)>", flags=re.I)
@@ -698,6 +753,16 @@ def _make_xiumi_browser(profile_dir: pathlib.Path):
     options = make_browser_options(browser_name, str(profile_dir), headless=False, detach=False)
     browser = make_webdriver(browser_name, options)
     browser._wanyou_browser_name = browser_name
+    # 秀米切页时会弹「你有未保存的修改，确定放弃并离开编辑器吗？」这个原生 confirm，
+    # 它会让任何 Selenium 命令直接抛 UnexpectedAlertPresentException。这里在每个新文档
+    # 里把 confirm 替换成「确定」，等于自动选择离开编辑器。
+    try:
+        browser.execute_cdp_cmd(
+            "Page.addScriptToEvaluateOnNewDocument",
+            {"source": "window.confirm = function(){return true;}; window.onbeforeunload = null;"},
+        )
+    except Exception:
+        pass
     if getattr(config, "PAGE_LOAD_TIMEOUT", 0):
         browser.set_page_load_timeout(config.PAGE_LOAD_TIMEOUT)
     return browser
@@ -725,6 +790,48 @@ def _wait_for_user_before_closing_browser():
     except EOFError:
         print("秀米：命令行输入已关闭，继续关闭浏览器。")
 
+
+_XIUMI_AUTH_JS = """
+const txt = document.body.innerText || '';
+const busy = /正在登录|登录后可保存|请先登录|登录后才能|正在获取调色板信息/.test(txt);
+const hidden = Array.from(document.querySelectorAll('a.usr-sign-in'))
+  .every(el => el.className.includes('ng-hide') || el.getBoundingClientRect().width === 0);
+return {authed: !busy && hidden, busy};
+"""
+
+
+_XIUMI_GUEST_MARKERS = ("登录后可保存颜色信息", "正在获取调色板信息", "微信号丨xiumius", "点击图库图片")
+
+
+def _xiumi_looks_like_guest(browser) -> bool:
+    try:
+        text = browser.execute_script("return document.body ? document.body.innerText : '';") or ""
+    except Exception:
+        return False
+    return sum(1 for marker in _XIUMI_GUEST_MARKERS if marker in text) >= 2
+
+
+def _xiumi_authed(browser):
+    """秀米经常出现「页面显示已登录、编辑器里其实没登录」的状态。
+
+    实测症状：本地资料页有「退出登录」，但编辑器里提示「正在登录…／登录后可保存颜色信息」，
+    点保存不报错也不生成草稿（URL 一直停在 /paper/for/new）。所以这里直接看编辑器里的
+    文字标记，而不是看头像。
+    """
+    try:
+        state = browser.execute_script(_XIUMI_AUTH_JS)
+    except Exception:
+        return True
+    if not isinstance(state, dict):
+        return True
+    if _xiumi_looks_like_guest(browser):
+        return False
+    try:
+        if _visible_login_links(browser):
+            return False
+    except Exception:
+        pass
+    return bool(state.get("authed"))
 
 def _wait_editor_ready(browser, timeout: int):
     WebDriverWait(browser, timeout).until(lambda d: d.execute_script("return document.readyState") == "complete")
@@ -824,12 +931,15 @@ def _xiumi_login_state(browser) -> dict:
 
 
 def _wait_for_manual_login(browser, timeout: int):
-    links = _visible_login_links(browser)
-    if links:
-        try:
-            links[0].click()
-        except Exception:
-            pass
+    # 以前这里会自动点页面上第一个「登录」链接，而秀米的登录入口会跳到微信扫码/授权页，
+    # 结果就是每次跑发布都弹一个授权窗口。现在一律不点，只等人自己登录、脚本只做检测。
+    if getattr(config, "XIUMI_LOGIN_AUTO_CLICK", False):
+        links = _visible_login_links(browser)
+        if links:
+            try:
+                links[0].click()
+            except Exception:
+                pass
 
     is_interactive = getattr(sys.stdin, "isatty", lambda: False)()
 
@@ -851,17 +961,21 @@ def _wait_for_manual_login(browser, timeout: int):
         print("秀米：未检测到登录状态，继续等待自动检测...")
 
     print("秀米：正在自动检测登录状态，请在浏览器中完成登录。")
+    try:
+        browser.execute_script("window.focus();")
+    except Exception:
+        pass
     deadline = time.time() + timeout
     next_probe_log = time.time() + 30
     while time.time() < deadline:
-        state = _xiumi_login_state(browser)
-        if state.get("authenticated"):
+        if _xiumi_authed(browser):
+            state = _xiumi_login_state(browser)
             _log_xiumi_debug("xiumi_manual_login_confirmed", state=state)
+            print("秀米：检测到登录完成")
             return True
-        # 每 30s 记一次中间状态：登录卡住时能直接看出卡在哪个页面、
-        # 页面上还有哪些登录入口（超时只有一条，看不出过程）。
+        # 每 30s 记一次中间状态：登录卡住时能直接看出卡在哪个页面。
         if time.time() >= next_probe_log:
-            _log_xiumi_debug("xiumi_login_poll", state=state)
+            _log_xiumi_debug("xiumi_login_poll", state=_xiumi_login_state(browser))
             next_probe_log = time.time() + 30
         time.sleep(1)
     _log_xiumi_debug("xiumi_manual_login_timeout", state=_xiumi_login_state(browser))
@@ -1026,6 +1140,61 @@ def _open_xiumi_editor(browser, home_url: str, login_timeout: int, wait_timeout:
     _ensure_xiumi_logged_in_before_edit(browser, "editor_ready")
 
 
+def _accept_alert(browser, accept: bool = True) -> str:
+    """吞掉浏览器原生 confirm/alert，返回它的文字（没有就返回空串）。"""
+    try:
+        alert = browser.switch_to.alert
+    except Exception:
+        return ""
+    text = ""
+    try:
+        text = alert.text or ""
+    except Exception:
+        pass
+    try:
+        alert.accept() if accept else alert.dismiss()
+    except Exception:
+        pass
+    return text
+
+
+def _run_with_alert_retry(fn, browser, *args, **kwargs):
+    """执行动作；如果被「未保存的修改」confirm 打断，先确认放弃再重试一次。"""
+    from selenium.common.exceptions import UnexpectedAlertPresentException
+
+    try:
+        return fn(browser, *args, **kwargs)
+    except UnexpectedAlertPresentException:
+        text = _accept_alert(browser, accept=True)
+        _log_xiumi_debug("xiumi_alert_handled", text=text, action=getattr(fn, "__name__", ""))
+        time.sleep(1)
+        return fn(browser, *args, **kwargs)
+
+
+def _open_existing_xiumi_draft(browser, draft_id: str, wait_timeout: int):
+    url = f"https://xiumi.us/studio/v5?lang=zh_CN#/paper/for/{draft_id}/cube/0"
+    print(f"秀米：打开已有草稿 {draft_id}")
+    browser.get(url)
+    time.sleep(3)
+    _accept_alert(browser, accept=True)
+    _dismiss_xiumi_recover_dialog(browser)
+    try:
+        _dismiss_xiumi_recover_dialog(browser)
+    except Exception:
+        pass
+    _run_with_alert_retry(_wait_editor_ready, browser, wait_timeout)
+    _accept_alert(browser, accept=True)
+    _dismiss_xiumi_recover_dialog(browser)
+
+
+def _reopen_editor_targets(browser, home_url: str, login_timeout: int, edit_draft_id: str = ""):
+    """登录补齐后重新进入编辑器：要改既有草稿就回到那篇，否则按新建流程走。"""
+    if edit_draft_id:
+        _open_existing_xiumi_draft(browser, edit_draft_id, max(15, getattr(config, "WAIT_TIMEOUT", 15)))
+    else:
+        _open_xiumi_editor(browser, home_url, login_timeout, max(15, getattr(config, "WAIT_TIMEOUT", 15)))
+
+
 def _set_input_value(browser, css_selector: str, value: str):
     if value is None:
         value = ""
@@ -1075,35 +1244,35 @@ def _setup_xiumi_clipboard_cdp(browser):
         return False
 
 
-def _dismiss_xiumi_recover_dialog(browser):
-    """Close the '上次没有保存到服务器，是否恢复？' dialog that a persistent profile may show."""
-    time.sleep(1.5)
-    dismiss = browser.execute_script(
-        """
-function exactBtn(text) {
-  const els = Array.from(document.querySelectorAll('button, [ng-click], a, [class*="btn"]'));
-  return els.find(e => (e.textContent || '').trim() === text && e.offsetWidth > 0 && e.offsetHeight > 0) || null;
-}
-for (const t of ['取消', '确定']) {
-  const b = exactBtn(t);
-  if (b) {
-    const r = b.getBoundingClientRect();
-    b.click();
-    return { text: t, x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2) };
-  }
-}
-return { text: null };
+def _dismiss_xiumi_recover_dialog(browser, attempts: int = 3, pause: float = 1.5):
+    """关掉「上次没有保存到服务器，是否恢复？」这类弹窗。
+
+    这个弹窗会一直盖在编辑器上，导致填充和保存都拿不到状态（实测保存后 URL 仍停在
+    /paper/for/new，返回 status=uncertain）。只在真的出现弹窗文字时才点，优先「取消」：
+    本地缓存是上次没保存成功的残留，服务器上的版本才作数。
+    """
+    script = """
+const notes = ['是否恢复', '没有保存到服务器', '未保存', '恢复上次'];
+const hit = Array.from(document.querySelectorAll('div,p,span'))
+  .some(el => notes.some(n => String(el.innerText || '').includes(n)));
+if (!hit) return 'none';
+const buttons = Array.from(document.querySelectorAll('button,a,span,div'))
+  .filter(el => el.children.length === 0 && el.getBoundingClientRect().width > 0);
+const pick = (names) => buttons.filter(el => names.includes(String(el.innerText || '').trim()));
+let target = pick(['取消']);
+if (!target.length) target = pick(['确定', '关闭', '知道了']);
+target.forEach(el => { try { el.click(); } catch (err) {} });
+return target.length ? 'clicked:' + target.length : 'no_button';
 """
-    )
-    if not dismiss or not dismiss.get("text"):
-        return dismiss
-    time.sleep(1.5)
-    still = browser.execute_script("return (document.body.innerText || '').includes('上次没有保存');")
-    if still and dismiss.get("x"):
-        browser.execute_cdp_cmd("Input.dispatchMouseEvent", {"type": "mousePressed", "x": dismiss["x"], "y": dismiss["y"], "button": "left", "clickCount": 1})
-        browser.execute_cdp_cmd("Input.dispatchMouseEvent", {"type": "mouseReleased", "x": dismiss["x"], "y": dismiss["y"], "button": "left", "clickCount": 1})
-        time.sleep(1.5)
-    return dismiss
+    for _ in range(max(1, attempts)):
+        try:
+            state = browser.execute_script(script)
+        except Exception:
+            return "error"
+        if not state or state == "none":
+            return "none"
+        time.sleep(pause)
+    return "dismissed"
 
 
 def _focus_xiumi_editor(browser):
@@ -2535,11 +2704,21 @@ def _click_save(browser):
     browser.execute_script("arguments[0].click();", save_button)
 
 
-def _wait_for_save_result(browser, old_url: str, timeout: int) -> tuple[str, str]:
+def _save_toast_visible(browser) -> bool:
+    try:
+        text = browser.execute_script("return document.body ? document.body.innerText : '';") or ""
+    except Exception:
+        return False
+    return bool(re.search(r"保存成功|已保存|保存完毕", text))
+
+
+def _wait_for_save_result(browser, old_url: str, timeout: int, expect_new_draft: bool = True) -> tuple[str, str]:
     deadline = time.time() + timeout
     while time.time() < deadline:
         current_url = browser.current_url
-        if "/for/new/" not in current_url:
+        if not expect_new_draft and _save_toast_visible(browser):
+            return "saved_in_place", current_url
+        if expect_new_draft and "/for/new/" not in current_url:
             return "url_changed", current_url
         if current_url != old_url and "/for/new/" not in current_url:
             return "url_changed", current_url
@@ -2849,6 +3028,7 @@ def publish_xiumi_draft(
     upload_probe: bool = False,
     apply_base_format: bool = True,
     preserve_styles: bool = False,
+    edit_draft_id: str = "",
 ) -> dict:
     html_path_obj = pathlib.Path(html_path).resolve()
     if not html_path_obj.exists():
@@ -2890,16 +3070,25 @@ def publish_xiumi_draft(
     keep_browser_open = False
     try:
         print("秀米：正在打开图文编辑器")
-        _open_xiumi_editor(
-            browser,
-            home_url_value,
-            login_timeout_value,
-            max(15, getattr(config, "WAIT_TIMEOUT", 15)),
-        )
+        _reopen_editor_targets(browser, home_url_value, login_timeout_value, edit_draft_id)
 
+        _dismiss_xiumi_recover_dialog(browser)
+        if not _xiumi_authed(browser):
+            print("秀米：编辑器里其实没有登录态，需要重新登录")
+            if not _wait_for_manual_login(browser, login_timeout_value):
+                raise RuntimeError("秀米登录未完成，已超过等待时间。")
+            _reopen_editor_targets(browser, home_url_value, login_timeout_value, edit_draft_id)
+            _dismiss_xiumi_recover_dialog(browser)
         print("秀米：正在填充标题、作者和摘要")
         _fill_xiumi_fields(browser, final_title, final_author, final_source_url, final_digest)
-        _fill_xiumi_body_then_images(browser, content_html, asset_base_path, upload_probe=upload_probe, preserve_styles=preserve_styles)
+        _run_with_alert_retry(
+            _fill_xiumi_body_then_images,
+            browser,
+            content_html,
+            asset_base_path,
+            upload_probe=upload_probe,
+            preserve_styles=preserve_styles,
+        )
 
         result["editor_url"] = browser.current_url
 
@@ -2909,9 +3098,10 @@ def publish_xiumi_draft(
             result["status"] = "dry_run"
         else:
             print("秀米：正在点击保存")
+            _dismiss_xiumi_recover_dialog(browser)
             before_url = browser.current_url
             _click_save(browser)
-            save_state, current_url = _wait_for_save_result(browser, before_url, save_timeout_value)
+            save_state, current_url = _wait_for_save_result(browser, before_url, save_timeout_value, expect_new_draft=not edit_draft_id)
             if save_state == "login_required":
                 print("秀米：保存前需要重新登录")
                 logged_in = _wait_for_manual_login(browser, login_timeout_value)
@@ -2924,14 +3114,15 @@ def publish_xiumi_draft(
                     max(15, getattr(config, "WAIT_TIMEOUT", 15)),
                 )
                 _wait_editor_ready(browser, max(15, getattr(config, "WAIT_TIMEOUT", 15)))
+                _dismiss_xiumi_recover_dialog(browser)
                 _fill_xiumi_fields(browser, final_title, final_author, final_source_url, final_digest)
                 _fill_xiumi_body_then_images(browser, content_html, asset_base_path, upload_probe=upload_probe, preserve_styles=preserve_styles)
                 before_url = browser.current_url
                 print("秀米：登录完成，重新点击保存")
                 _click_save(browser)
-                save_state, current_url = _wait_for_save_result(browser, before_url, save_timeout_value)
+                save_state, current_url = _wait_for_save_result(browser, before_url, save_timeout_value, expect_new_draft=not edit_draft_id)
             result["editor_url"] = current_url
-            if save_state == "url_changed":
+            if save_state in {"url_changed", "saved_in_place"}:
                 print("秀米：草稿已保存")
                 print(f"秀米草稿地址：{current_url}")
                 result["status"] = "saved"
@@ -3005,6 +3196,11 @@ def main():
     parser.add_argument("--login-timeout", type=int, default=getattr(config, "XIUMI_LOGIN_WAIT_SECONDS", 600))
     parser.add_argument("--dry-run", action="store_true", help="Open and fill editor, but do not click save.")
     parser.add_argument(
+        "--edit-draft-id",
+        default="",
+        help="直接打开已有草稿并原地替换内容后保存（新建草稿失败时用这个）。",
+    )
+    parser.add_argument(
         "--upload-probe",
         action="store_true",
         help="Upload a generated harmless test image first; upload body images only if the probe succeeds.",
@@ -3042,6 +3238,7 @@ def main():
         upload_probe=args.upload_probe,
         apply_base_format=not args.no_base_format,
         preserve_styles=args.preserve_styles,
+        edit_draft_id=args.edit_draft_id,
     )
 
 

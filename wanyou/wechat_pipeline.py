@@ -8,6 +8,7 @@ from wanyou.decider import apply_keyword_rules, should_copy_with_llm
 from wanyou.filter_debug import log_filter_decision
 from wanyou.temporal_filter import assess_temporal_relevance
 from wanyou.utils_issue_filter import current_issue_cutoff
+from wanyou.wechat_brief import summarize_wechat_item
 from wanyou.wechat_client import (
     create_api_session,
     create_article_session,
@@ -18,19 +19,12 @@ from wanyou.wechat_client import (
 )
 from wanyou.weread_client import collect_articles as collect_weread_articles
 from wanyou.wechat_content import enrich_items_with_content
+from wanyou.wechat_qr import collect_qr_images
+from wanyou.utils_dates import format_datetime_text
 from wanyou.utils_html import _rule_clean_markdown
-from wanyou.utils_llm import chat_complete
 
 
 NO_WECHAT_MATCH_MESSAGE = "本期没有符合条件的最新公众号信息。"
-
-
-def format_datetime_text(item):
-    ts = item.get("timestamp")
-    if ts:
-        return datetime.datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M")
-    publish_time = (item.get("publish_time") or "").strip()
-    return publish_time or "N/A"
 
 
 def _build_filter_snippet(item):
@@ -113,48 +107,55 @@ def mark_items_for_md(items):
         )
 
 
-def _fallback_wechat_summary(item):
-    for candidate in (item.get("digest") or "", item.get("content") or ""):
-        cleaned = _rule_clean_markdown(candidate)
-        if cleaned:
-            cleaned = re.sub(r"\s+", " ", cleaned).strip()
-            return cleaned[: getattr(config, "LLM_SUMMARY_MAX_CHARS", 100)]
-    return ""
+_TITLE_NORM_RE = re.compile(r"[\s\u3000，。；：、！？“”\"'（）()—\-·｜|,.!:;【】\[\]]+")
 
 
-def summarize_wechat_item(item):
-    title = (item.get("title") or "").strip()
-    digest = _rule_clean_markdown(item.get("digest") or "")
-    content = _rule_clean_markdown(item.get("content") or "")
-    snippet = "\n".join(part for part in [digest, content] if part).strip()
-    if not snippet:
-        return ""
+def _normalized_title(title):
+    return _TITLE_NORM_RE.sub("", title or "").lower()
 
-    system_prompt = (
-        "You are editing a concise campus briefing.\n"
-        "Summarize the article in simplified Chinese within 90 characters.\n"
-        "Keep only the most useful student-facing information such as theme, time, place, registration, deadline, or audience.\n"
-        "Do not copy long original paragraphs.\n"
-        "Return summary text only."
-    )
-    user_prompt = (
-        f"标题: {title}\n"
-        f"日期: {format_datetime_text(item)}\n"
-        f"来源公众号: {(item.get('account_keyword') or '').strip()}\n"
-        f"内容:\n{snippet[:2500]}"
-    )
-    result = chat_complete(
-        system_prompt,
-        user_prompt,
-        model=getattr(config, "WECHAT_SUMMARY_LLM_MODEL", "") or None,
-        temperature=0,
-        task_label=f"正在总结公众号内容：{title[:24]}",
-    )
-    if result:
-        cleaned = re.sub(r"\s+", " ", result).strip()
-        if cleaned:
-            return cleaned[: getattr(config, "LLM_SUMMARY_MAX_CHARS", 100)]
-    return _fallback_wechat_summary(item)
+
+def _dedupe_cross_account_titles(items, window_days=3):
+    """同一条推送常被多个号转发（如“清社派对”学生会和社团号都发）。
+
+    加入社团/公益号之后跨号重复明显增多，这里按“规范化标题 + 发布时间相差 ≤3 天”
+    归并，保留材料更全的那条（内容长度优先，其次更新时间），避免同一张卡片在
+    两个栏目里各出现一次。
+    """
+    window_seconds = int(window_days) * 86400
+    best = {}
+    passthrough = []
+    for item in items:
+        key = _normalized_title(item.get("title") or "")
+        if not key:
+            passthrough.append(item)
+            continue
+        current = best.get(key)
+        if current is None:
+            best[key] = item
+            continue
+        ts = int(item.get("timestamp") or 0)
+        current_ts = int(current.get("timestamp") or 0)
+        if abs(ts - current_ts) > window_seconds:
+            passthrough.append(item)
+            continue
+        if (len(item.get("content") or ""), ts) > (len(current.get("content") or ""), current_ts):
+            dropped, kept = current, item
+        else:
+            dropped, kept = item, current
+        best[key] = kept
+        log_filter_decision(
+            section="wechat",
+            title=dropped.get("title") or "",
+            status="dropped",
+            reason="duplicate_title_across_accounts",
+            stage="wechat_dedupe",
+            date=format_datetime_text(dropped),
+            source=dropped.get("account_keyword") or "",
+            details={"kept_source": kept.get("account_keyword") or ""},
+        )
+    merged = list(best.values()) + passthrough
+    merged.sort(key=lambda item: item.get("timestamp") or 0, reverse=True)
+    return merged
 
 
 def _prefilter_recent_wechat_items(items, days_limit=None):
@@ -239,6 +240,7 @@ def collect_wechat_items(days_limit=None):
 
     items = dedupe_items(items)
     items.sort(key=lambda item: item.get("timestamp") or 0, reverse=True)
+    items = _dedupe_cross_account_titles(items)
     for item in items:
         log_filter_decision(
             section="wechat",
@@ -253,6 +255,13 @@ def collect_wechat_items(days_limit=None):
 
     items = _prefilter_recent_wechat_items(items, days_limit=days_limit)
     print(f"公众号：按发布时间初筛后保留 {len(items)} 条候选推送")
+
+    if getattr(config, "WECHAT_QR_ENABLED", True):
+        print("公众号：正在识别正文里的报名二维码...")
+        for item in items:
+            qr_images = collect_qr_images(item)
+            if qr_images:
+                item["qr_images"] = qr_images
 
     print(f"公众号：将下载 {len(items)} 条候选推送正文")
     enrich_items_with_content(session, items, timeout, sleep_seconds)
@@ -309,16 +318,72 @@ def collect_wechat_items(days_limit=None):
         print(f"公众号：正在总结保留推送 {index}/{len(items)}：{(item.get('account_keyword') or '未知公众号')} - {(item.get('title') or '无标题')[:40]}")
         item["content"] = _rule_clean_markdown(item.get("content") or "")
         item["digest"] = _rule_clean_markdown(item.get("digest") or "")
-        item["summary"] = summarize_wechat_item(item)
+        lede, summary = summarize_wechat_item(item)
+        item["lede"] = lede
+        item["summary"] = summary
+
+    # 最后一闸：按见刊日判断「还赶不赶得上」。temporal_filter 解析不出日期就放行，
+    # 公众号节选里常常只有发布日期，于是时代论坛报名、博物馆之夜这类过期推送全混进来，
+    # 所以这条链路单独用更保守的规则（回顾关键词 → 日期全在过去 → LLM 不确定即弃）。
+    if getattr(config, "WECHAT_FRESHNESS_GATE", True):
+        items = _apply_freshness_gate(items)
+
     mark_items_for_md(items)
     visible_count = sum(1 for item in items if item.get("include_in_md", True))
     print(f"公众号：筛选完成，保留 {visible_count} 条进入万有预报")
     return items
 
 
+def _apply_freshness_gate(items):
+    from wanyou.wechat_freshness import decide_item
+
+    kept = []
+    for item in items:
+        decision = decide_item(item)
+        item["freshness"] = decision
+        log_filter_decision(
+            section="wechat",
+            title=item.get("title") or "",
+            status="kept" if decision["keep"] else "dropped",
+            reason=str(decision.get("reason") or "freshness_unknown"),
+            stage="wechat_freshness_gate",
+            date=format_datetime_text(item),
+            url=item.get("url") or "",
+            source=item.get("account_keyword") or "",
+            details={"evidence": decision.get("evidence", ""), "source": decision.get("source", "")},
+        )
+        if decision["keep"]:
+            kept.append(item)
+        else:
+            print(f"公众号：时效判定剔除：{(item.get('title') or '')[:34]}（{decision.get('reason')}）")
+    print(f"公众号：时效判定后保留 {len(kept)}/{len(items)} 条")
+    return kept
+
+
 def write_md(items, output_path, include_content=True, header="# 其他公众号公开历史文章"):
     with open(output_path, "w", encoding="utf-8") as f:
         write_md_stream(items, f, include_content=include_content, header=header)
+
+
+def _load_link_overrides():
+    """读取人工补的链接表：标题<TAB>链接。
+
+    weread 那条链路拿不到原文地址（见 weread_client 注释），所以留一个人工口子：
+    把 `output/.../wechat_links.tsv` 里填上「标题 制表符 mp 链接」，重跑就会带上。
+    """
+    path = getattr(config, "WECHAT_LINKS_TSV", "")
+    if not path:
+        return {}
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            rows = {}
+            for line in handle:
+                parts = line.rstrip("\n").split("\t")
+                if len(parts) >= 2 and parts[0].strip() and parts[1].strip():
+                    rows[parts[0].strip()] = parts[1].strip()
+            return rows
+    except FileNotFoundError:
+        return {}
 
 
 def write_md_stream(items, stream, include_content=True, header="# 其他公众号公开历史文章"):
@@ -328,6 +393,7 @@ def write_md_stream(items, stream, include_content=True, header="# 其他公众�
         stream.write(f"## 占位卡片\n\n{NO_WECHAT_MATCH_MESSAGE}\n\n")
         return
 
+    overrides = _load_link_overrides()
     for item in visible_items:
         title = item.get("title") or "N/A"
         url = item.get("url") or "N/A"
@@ -337,20 +403,37 @@ def write_md_stream(items, stream, include_content=True, header="# 其他公众�
         stream.write(f"## {title}\n\n")
         if account_keyword:
             stream.write(f"来源公众号: {account_keyword}\n\n")
-        stream.write(f"日期: {format_datetime_text(item)}\n\n")
-        stream.write(f"链接: {url}\n\n")
+        # 公众号卡片不写推送发布日期：见刊日就是次周周一，读者看的是活动/截止信息，
+        # 发布日期对读者没有价值，还会和活动时间混淆。
+        # 没有可靠原文链接时整行不写：以前这里会输出拼出来的 mp.weixin.qq.com 地址，
+        # 打不开反而是干扰。人工补的链接优先。
+        link = overrides.get(title.strip()) or (url if url != "N/A" else "")
+        if link:
+            stream.write(f"链接: {link}\n\n")
+        elif getattr(config, "WECHAT_LINK_PLACEHOLDER", ""):
+            # 留空位给人工填：宁可在成稿里看到「待补」，也不要把条目做成没有出处
+            stream.write(f"链接: {config.WECHAT_LINK_PLACEHOLDER}\n\n")
 
-        publish_time = item.get("publish_time") or ""
         author = item.get("author") or ""
-        if publish_time:
-            stream.write(f"发布时间: {publish_time}\n\n")
         if author:
             stream.write(f"作者: {author}\n\n")
+        # 「要点透视」写形式信息（对象/时间/地点/截止），「摘要」写内容信息；
+        # 合成阶段 _enrich_items 会把这行提升成卡片顶部的要点透视框并从正文里删掉。
+        lede = (item.get("lede") or "").strip()
+        if lede:
+            stream.write(f"要点透视: {lede}\n\n")
         summary = (item.get("summary") or "").strip()
         if summary:
             stream.write(f"摘要: {summary}\n\n")
         elif digest:
             stream.write(f"摘要: {digest}\n\n")
+
+        # 报名二维码单独成图：放在摘要之后、「内容:」之前，选稿阶段删长正文时不会丢。
+        for qr in item.get("qr_images") or []:
+            qr_path = str(qr.get("path") or "").strip()
+            if not qr_path:
+                continue
+            stream.write(f"![{qr.get('alt') or '报名二维码'}]({qr_path})\n\n")
 
         if include_content:
             content = item.get("content") or ""
@@ -362,34 +445,40 @@ def write_md_stream(items, stream, include_content=True, header="# 其他公众�
                 stream.write("\n")
 
 
-WECHAT_SECTION_ORDER = [
-    "学生会信息",
-    "青年科协信息",
-    "学生社团信息",
-    "学生公益信息",
-    "其他公众号信息",
+WECHAT_SECTION_ORDER = list(config.WECHAT_SECTIONS)
+
+
+# 先按「来源公众号」定栏目，再退回按正文关键词猜。账号归属优先的原因：
+# 加了社团/公益两个号之后，社团号的活动稿常带「创新/创业」字样，按关键词会被
+# 误分到青年科协；公益号的志愿稿也会被学生会/社团抢走。
+WECHAT_ACCOUNT_SECTION_RULES = (
+    (("清华大学学生会", "学生会"), "学生会信息"),
+    (("清华青年科创", "青年科协"), "青年科协信息"),
+    (("学生社团",), "学生社团信息"),
+    (("学生公益",), "学生公益信息"),
+)
+_WECHAT_SCIENCE_KEYWORDS = ["科协", "科创", "青科", "创新", "创业"]
+_WECHAT_WELFARE_KEYWORDS = [
+    "公益", "志愿", "志愿者", "支教", "捐赠", "义卖", "献血", "助残", "环保", "募捐", "慈善",
 ]
+_WECHAT_CLUB_KEYWORDS = ["社团", "协会", "俱乐部", "招新", "百团", "工作坊", "学生组织", "兴趣小组"]
 
 
 def _wechat_section_for_item(item):
     account_keyword = (item.get("account_keyword") or "").strip()
     title = (item.get("title") or "").strip()
-    digest = (item.get("digest") or "").strip()
-    content = (item.get("content") or "").strip()
-    text = "\n".join([account_keyword, title, digest, content]).lower()
+    text = "\n".join([title, item.get("digest") or "", item.get("content") or ""]).lower()
 
-    welfare_keywords = ["公益", "志愿", "志愿者", "支教", "捐赠", "义卖", "献血", "助残", "环保", "募捐", "慈善"]
-    club_keywords = ["社团", "协会", "俱乐部", "招新", "百团", "工作坊", "学生组织", "兴趣小组"]
-
-    if "学生会" in account_keyword or "学生会" in title:
+    for account_fragments, section in WECHAT_ACCOUNT_SECTION_RULES:
+        if any(fragment in account_keyword for fragment in account_fragments):
+            return section
+    if "学生会" in title:
         return "学生会信息"
-    if any(keyword in account_keyword for keyword in ["青年科创", "青年科协"]) or any(
-        keyword in text for keyword in ["科协", "科创", "青科", "创新", "创业"]
-    ):
+    if any(keyword in text for keyword in _WECHAT_SCIENCE_KEYWORDS):
         return "青年科协信息"
-    if any(keyword in text for keyword in welfare_keywords):
+    if any(keyword in text for keyword in _WECHAT_WELFARE_KEYWORDS):
         return "学生公益信息"
-    if any(keyword in text for keyword in club_keywords):
+    if any(keyword in text for keyword in _WECHAT_CLUB_KEYWORDS):
         return "学生社团信息"
     return "其他公众号信息"
 
