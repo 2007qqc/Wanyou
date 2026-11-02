@@ -301,129 +301,7 @@ def _highlight_time_text(text: str) -> str:
     return highlight_time_spans(html.escape(text or ""))
 
 
-<<<<<<< HEAD
-# ── 一键复制到秀米 / 公众号 ─────────────────────────────────────────────────
-# 公众号和秀米只认内联 style，所以复制源直接用 wechat_inline 产出的那份内联
-# HTML —— 和手工粘进编辑器的是同一份，保证「所复即所粘」。页面本体仍是带 class
-# 的 H5，两者由同一份 Markdown 生成、共用同一套设计语言。
-
-_COPY_CSS = """
-    .copy-bar { position: fixed; right: 16px; bottom: 16px; z-index: 9999; display: flex; align-items: center; gap: 10px; }
-    .copy-bar button { appearance: none; border: 1px solid var(--accent-deep); background: var(--accent); color: #4a3800; font-family: inherit; font-weight: 700; font-size: 14px; padding: 10px 18px; border-radius: 999px; cursor: pointer; box-shadow: 0 8px 20px rgba(120, 90, 20, 0.25); }
-    .copy-bar button:hover:not(:disabled) { background: var(--accent-deep); color: #fff; }
-    .copy-bar button:active:not(:disabled) { transform: translateY(1px); }
-    .copy-bar button:disabled { opacity: 0.6; cursor: default; }
-    .copy-status { font-size: 13px; color: var(--muted); background: rgba(255, 255, 255, 0.94); border: 1px solid rgba(213, 165, 28, 0.35); border-radius: 999px; padding: 5px 10px; max-width: 48vw; }
-    /* 手机上窗口只有 390px，那行提示会压住正文；窄屏只留按钮，反馈改成按钮文案 */
-    @media (max-width: 640px) { .copy-status { display: none; } }
-    /* 复制源必须能被选区命中：不能用 display:none，挪到屏幕外即可 */
-    #wx-copy-src { position: fixed; left: -10000px; top: 0; width: 390px; }
-    @media print { .copy-bar { display: none; } }
-"""
-
-_COPY_BLOCK = """
-  <div class="copy-bar">
-    <span class="copy-status" id="wx-copy-status">复制后可直接粘贴到秀米 / 公众号草稿</span>
-    <button type="button" id="wx-copy-btn">复制到公众号</button>
-  </div>
-  <div id="wx-copy-src" aria-hidden="true">__COPY_SOURCE__</div>
-  <script>
-  (function () {
-    var btn = document.getElementById('wx-copy-btn');
-    var status = document.getElementById('wx-copy-status');
-    var src = document.getElementById('wx-copy-src');
-    if (!btn || !src) return;
-    var idle = status ? status.textContent : '';
-
-    function say(text, tone) {
-      if (!status) return;
-      status.textContent = text;
-      status.style.color = tone === 'ok' ? '#2f6b2f' : (tone === 'err' ? '#b3352a' : '');
-      if (tone) {
-        window.setTimeout(function () {
-          status.textContent = idle;
-          status.style.color = '';
-        }, 5000);
-      }
-    }
-
-    function copyBySelection() {
-      var range = document.createRange();
-      range.selectNodeContents(src);
-      var sel = window.getSelection();
-      sel.removeAllRanges();
-      sel.addRange(range);
-      var ok = false;
-      try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
-      sel.removeAllRanges();
-      return ok;
-    }
-
-    /* 本地图片（E:/… 或 file://）粘到公众号后是断图，如实告诉用户要补传 */
-    function localImageCount() {
-      var imgs = src.querySelectorAll('img');
-      var n = 0;
-      for (var i = 0; i < imgs.length; i++) {
-        var s = imgs[i].getAttribute('src') || '';
-        if (/^(file:|[A-Za-z]:)/.test(s)) n++;
-      }
-      return n;
-    }
-
-    function doneMessage(ok) {
-      if (!ok) return '复制失败，请手动全选复制';
-      var n = localImageCount();
-      return n > 0
-        ? '已复制；有 ' + n + ' 张本地图片需在编辑器里重新上传'
-        : '已复制，去编辑器里粘贴';
-    }
-
-    function copyRich() {
-      var markup = src.innerHTML;
-      var plain = src.innerText || src.textContent || '';
-      if (window.isSecureContext && navigator.clipboard && window.ClipboardItem) {
-        return navigator.clipboard.write([new ClipboardItem({
-          'text/html': new Blob([markup], { type: 'text/html' }),
-          'text/plain': new Blob([plain], { type: 'text/plain' })
-        })]).then(function () { return true; }, function () { return copyBySelection(); });
-      }
-      return Promise.resolve(copyBySelection());
-    }
-
-    btn.addEventListener('click', function () {
-      btn.disabled = true;
-      copyRich().then(function (ok) {
-        btn.disabled = false;
-        say(doneMessage(ok), ok ? 'ok' : 'err');
-        // 窄屏没有状态行，直接把结果写在按钮上
-        var original = btn.textContent;
-        btn.textContent = ok ? '已复制' : '复制失败';
-        window.setTimeout(function () { btn.textContent = original; }, 2000);
-      });
-    });
-  })();
-  </script>
-"""
-
-
-def build_copy_block(copy_source_html: str) -> str:
-    """把内联正文塞进隐藏容器，配好按钮和复制脚本。"""
-
-    return _COPY_BLOCK.replace("__COPY_SOURCE__", copy_source_html or "")
-
-
-def markdown_to_h5_html(
-    markdown_text: str,
-    markdown_path: str,
-    output_path: str,
-    title: str = "",
-    copy_source_html: str = "",
-    hero_badge_src: str = "",
-    hero_meta: str = "",
-) -> str:
-=======
 def markdown_to_h5_html(markdown_text: str, markdown_path: str, output_path: str, title: str = "") -> str:
->>>>>>> 319500b94447db31f5ff354bce92613fd8c603cb
     page_title = _safe_title(title)
     theme_assets = ensure_theme_assets(output_path)
     badge_rel = ""
@@ -574,13 +452,6 @@ def markdown_to_h5_html(markdown_text: str, markdown_path: str, output_path: str
     hero_badge = ""
     if badge_rel:
         hero_badge = f"<img class='hero-badge' src='{html.escape(badge_rel)}' alt='物理系风格标识' loading='lazy' />"
-    hero_banner = ""
-    if hero_badge_src:
-        hero_banner = (
-            f"<img class='hero-banner' src='{html.escape(hero_badge_src)}' "
-            "alt='万有预报' loading='lazy' />"
-        )
-    hero_meta_html = f"<p class='hero-meta'>{html.escape(hero_meta)}</p>" if hero_meta else ""
     footer_badge = ""
     if badge_mini_rel:
         footer_badge = f"<img class='footer-badge' src='{html.escape(badge_mini_rel)}' alt='物理系风格标识' loading='lazy' />"
@@ -640,12 +511,11 @@ def markdown_to_h5_html(markdown_text: str, markdown_path: str, output_path: str
       background: var(--accent);
     }}
     .hero-top {{ display: flex; align-items: center; gap: 14px; margin-bottom: 12px; }}
-    .hero-banner {{ display: block; width: 100%; max-width: 100%; height: auto; margin: 16px 0 0; border-radius: 14px; }}
     .hero-badge {{ width: 68px; height: 68px; border-radius: 50%; flex: 0 0 auto; box-shadow: 0 10px 24px rgba(143, 106, 0, 0.12); background: #fff; }}
     .hero-mark {{ display: inline-flex; align-items: center; gap: 8px; padding: 5px 10px; border-radius: 999px; background: var(--accent-soft); color: var(--accent-ink); font-size: 12px; letter-spacing: 0.08em; }}
     .hero h1 {{ margin: 8px 0 0; font-size: 34px; line-height: 1.15; letter-spacing: 0.03em; }}
     .hero p {{ margin: 10px 0 0; color: var(--muted); line-height: 1.85; font-size: 15px; }}
-    .hero .hero-meta {{ margin: 10px 0 0; color: var(--muted); font-size: 14px; line-height: 1.8; letter-spacing: 0.01em; }}
+    .hero-note {{ margin-top: 16px; border-top: 4px solid var(--accent); background: #efefef; padding: 12px 14px; font-size: 14px; line-height: 1.8; border-radius: 0 0 16px 16px; }}
     .section {{ margin-top: 24px; }}
     .section-head {{ margin-bottom: 10px; }}
     .section-kicker {{ display: inline-block; margin-bottom: 8px; padding: 0.45em 0.8em; background: rgba(245, 200, 51, 0.7); color: #fff; font-size: 16px; letter-spacing: 0.08em; border-radius: 4px 0 0 4px; position: relative; }}
@@ -698,11 +568,6 @@ def markdown_to_h5_html(markdown_text: str, markdown_path: str, output_path: str
 <body>
   <main class="page">
     <header class="hero">
-<<<<<<< HEAD
-      <h1>{html.escape(page_title)}</h1>
-      {hero_meta_html}
-      {hero_banner}
-=======
       <div class="hero-top">
         {hero_badge}
         <div>
@@ -712,7 +577,6 @@ def markdown_to_h5_html(markdown_text: str, markdown_path: str, output_path: str
       </div>
       <p>参考人工编辑版万有预报的公众号排版节奏，保留物理系熟悉的暖黄色标签、纸片感信息卡和系内识别贴图，让自动生成的版本也尽量像一篇认真整理过的推送。</p>
       <div class="hero-note">天气渐暖，大家注意增减衣物。以下内容按栏目整理，方便直接转成物理系风格的万有预报。</div>
->>>>>>> 319500b94447db31f5ff354bce92613fd8c603cb
     </header>
     {body_html}
     <footer class="page-footer">
@@ -726,78 +590,11 @@ def markdown_to_h5_html(markdown_text: str, markdown_path: str, output_path: str
 
 
 
-HERO_BADGE_FILENAME = "badge.jpg"
-
-
-def hero_badge_source() -> str:
-    """页头横幅图的绝对路径（仓库根目录的 ``badge.jpg``）。
-
-    没有就返回空串、页头只留标题和元信息——不再回退别的文件名。
-    """
-
-    root = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
-    path = os.path.join(root, HERO_BADGE_FILENAME)
-    return path.replace("\\", "/") if os.path.isfile(path) else ""
-
-
 def export_h5(markdown_path: str, output_path: str, title: str = "") -> str:
     with open(markdown_path, "r", encoding="utf-8") as f:
         markdown_text = f.read()
 
-<<<<<<< HEAD
-    # 延迟导入：wechat_inline 依赖本模块的常量，模块级导入会成环
-    from generators.wechat_inline import markdown_to_wechat_inline_html
-    from wanyou import academic_calendar
-
-    # 页头元信息：生成时间 +（实时从 info 抓到才算）校历周次
-    hero_meta = academic_calendar.summary_line()
-    hero_badge_src = hero_badge_source()
-
-    copy_source_html = markdown_to_wechat_inline_html(
-        markdown_text,
-        markdown_path=markdown_path,
-        hero_badge_src=hero_badge_src,
-        hero_meta=hero_meta,
-    )
-    # 本地图片在粘贴时必然是断图，导出阶段就压成 data: 内嵌，让复制真正做到
-    # 「不用上传」。压不动的（超大/读失败）保持原样，页面按钮会如实提示张数。
-    copy_source_html, image_stats = embed_local_images(
-        copy_source_html,
-        base_dir=os.path.dirname(os.path.abspath(markdown_path)),
-    )
-    remaining = int(image_stats.get("remaining_local") or 0)
-    if remaining:
-        # 早期预警：别等到用户在编辑器里发现断图
-        print(
-            f"[copy] {remaining} 张本地图片没能内嵌（超出预算或读取失败），"
-            "粘贴到公众号/秀米后需要手动补图"
-        )
-    html_text = markdown_to_h5_html(
-        markdown_text,
-        markdown_path=markdown_path,
-        output_path=output_path,
-        title=title,
-        copy_source_html=copy_source_html,
-        hero_badge_src=hero_badge_src,
-        hero_meta=hero_meta,
-    )
-    # 页面本体也要自包含：<img> 默认写的是相对输出目录的路径，把 HTML 单独拷贝到
-    # 别处（发给自己、塞进共享盘、丢掉 output/ 目录）就会整页断图。这里把页面里的
-    # 本地 <img> 同样压成 data:，最终产物是单文件、双击即可看。复制源里的 data:
-    # 会被跳过，不会重复嵌入。
-    html_text, page_image_stats = embed_local_images(
-        html_text,
-        base_dir=os.path.dirname(os.path.abspath(output_path)),
-    )
-    page_remaining = int(page_image_stats.get("remaining_local") or 0)
-    if page_remaining:
-        print(
-            f"[page] {page_remaining} 张本地图片没能内嵌（超出预算或读取失败），"
-            "HTML 单独移动后这些图片会找不到"
-        )
-=======
     html_text = markdown_to_h5_html(markdown_text, markdown_path=markdown_path, output_path=output_path, title=title)
->>>>>>> 319500b94447db31f5ff354bce92613fd8c603cb
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     with open(output_path, "w", encoding="utf-8") as f:
         f.write(html_text)

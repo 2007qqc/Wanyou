@@ -77,49 +77,11 @@ def _resolve_content_paths(html_path: pathlib.Path, markdown_override: str = "")
     if markdown_path.exists():
         markdown_text = markdown_path.read_text(encoding="utf-8")
         _log_xiumi_debug("xiumi_source_markdown", path=str(markdown_path))
-        # 页头三件套（标题 / 元信息 / 横幅）在 H5 与秀米两处必须一致，
-        # 所以这里复用 H5 的那套生成逻辑，而不是让秀米拿到一个没有页头的正文。
-        return (
-            markdown_to_wechat_inline_html(
-                markdown_text,
-                markdown_path=str(markdown_path),
-                hero_badge_src=_xiumi_hero_badge_src(),
-                hero_meta=_xiumi_hero_meta(),
-            ),
-            markdown_path,
-        )
+        return markdown_to_wechat_inline_html(markdown_text, markdown_path=str(markdown_path)), markdown_path
 
     html_text = html_path.read_text(encoding="utf-8")
     _log_xiumi_debug("xiumi_source_html", path=str(html_path))
     return _extract_main_html(html_text), html_path
-
-
-def _xiumi_hero_badge_src() -> str:
-    """页头横幅的本地文件路径（秀米只能把本地文件转成 CDN，data: 会被剥掉）。"""
-
-    try:
-        from generators.h5_generator import hero_badge_source
-
-        path = hero_badge_source()
-        _log_xiumi_debug("xiumi_hero_badge", path=path)
-        return path
-    except Exception as exc:
-        _log_xiumi_debug("xiumi_hero_badge_error", error=f"{type(exc).__name__}: {exc}")
-        return ""
-
-
-def _xiumi_hero_meta() -> str:
-    """生成时间 +（info 抓得到时）校历周次；抓不到就只有生成时间。"""
-
-    try:
-        from wanyou import academic_calendar
-
-        line = academic_calendar.summary_line()
-        _log_xiumi_debug("xiumi_hero_meta", text=line)
-        return line
-    except Exception as exc:
-        _log_xiumi_debug("xiumi_hero_meta_error", error=f"{type(exc).__name__}: {exc}")
-        return ""
 
 
 def _guess_mime_type(path: pathlib.Path) -> str:

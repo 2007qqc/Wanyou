@@ -27,97 +27,6 @@ META_LABELS = {
     "活动时间",
 }
 
-<<<<<<< HEAD
-PAGE_TITLE = "万有预报"
-
-# ── 尺寸与配色，取自 h5_generator 的 CSS 变量，保证两份产物是同一套视觉 ──
-ACCENT = "#f5c833"
-ACCENT_SOFT = "rgba(245,200,51,0.16)"
-ACCENT_INK = "#8f6a00"
-ACCENT_LINE = "rgba(213,165,28,0.55)"
-INK = "#3e3e3e"
-MUTED = "#70695d"
-# 公众号深色模式只对「纯白」这类元素单独做反转，页面底色和卡片底色一旦亮度
-# 不同，就会出现「卡片黑了、外面还是浅的」的割裂。把两者统一成同一个纯白，
-# 微信要么整体不动、要么整体反转，内外永远一致。
-# 代价：浅色模式下正文是纯白而不是 H5 的米色纸感。
-PAPER = "#ffffff"
-PAGE_BG = "#ffffff"
-# 字体名必须用单引号：这份样式最终会写进 style="…" 属性里，
-# 用双引号会把属性提前截断（font-family 整条失效，只是 Windows 默认中文
-# 字体恰好是宋体，才看起来"像是生效了"）。
-SERIF = "'Source Han Serif SC','Noto Serif SC','Songti SC',serif"
-
-PAGE_STYLE = (
-    # box-sizing 必须写：默认 content-box 时 max-width 不含内边距，
-    # 390 的视口会被撑成 390+24=414，右侧整片内容被裁。
-    f"box-sizing:border-box;max-width:760px;margin:0 auto;padding:8px 12px 24px;background:{PAGE_BG};color:{INK};"
-    f"font-family:{SERIF};line-height:1.75;font-size:15px;word-break:break-word;overflow-wrap:break-word;"
-    # 卡片右下折角会探出边距，H5 靠 body{overflow-x:hidden} 兜底，这里给同样的兜底
-    "overflow:hidden;"
-)
-# H5 的顶部黄条是 .hero::before 伪元素，公众号里没有伪元素，用一条真实的分隔条替代
-HERO_BAR_STYLE = f"height:5px;margin:0 0 16px;border-radius:999px;background:{ACCENT};"
-HERO_STYLE = (
-    f"margin:0 0 18px;padding:22px 20px 20px;border:1px solid {ACCENT_LINE};border-radius:26px;"
-    # 原来是从纯白到米白的渐变；公众号深色模式会把"纯白"和"米白"区别对待，
-    # 所以这里也统一成强调色淡染，全文只剩「纯白 + 黄调」两类底色。
-    "background:rgba(245,200,51,0.07);"
-    "box-shadow:0 22px 50px rgba(92,74,16,0.08);"
-)
-HERO_MARK_STYLE = (
-    f"display:inline-block;margin:0 0 10px;padding:5px 10px;border-radius:999px;"
-    f"background:{ACCENT_SOFT};color:{ACCENT_INK};font-size:12px;letter-spacing:.08em;"
-)
-H1_STYLE = f"margin:8px 0 0;color:{INK};font-size:34px;font-weight:700;line-height:1.15;letter-spacing:.03em;"
-SUBTITLE_STYLE = f"margin:10px 0 0;color:{MUTED};font-size:15px;line-height:1.85;"
-HERO_BANNER_STYLE = (
-    "display:block;width:100%;max-width:100%;height:auto;margin:16px 0 0;border-radius:14px;"
-)
-HERO_META_STYLE = f"margin:10px 0 0;color:{MUTED};font-size:14px;line-height:1.8;"
-
-SECTION_STYLE = "margin:24px 0 0;padding:0;"
-# H5 的 kicker 是「药丸 + ::after 三角」；这里用「药丸 span + border 三角 span」拼同样的形状
-SECTION_TAG_STYLE = (
-    "display:inline-block;margin:0 0 8px;padding:.45em .8em;background:rgba(245,200,51,0.7);"
-    "color:#fff;font-size:16px;letter-spacing:.08em;border-radius:4px 0 0 4px;vertical-align:middle;"
-)
-SECTION_TAG_ARROW_STYLE = (
-    "display:inline-block;width:0;height:0;margin:0 0 8px;"
-    "border-left:18px solid rgba(245,200,51,0.7);"
-    "border-top:16px solid transparent;border-bottom:16px solid transparent;vertical-align:middle;"
-)
-SECTION_TITLE_STYLE = f"margin:4px 0 0;color:{INK};font-size:28px;font-weight:700;line-height:1.2;"
-SECTION_LEAD_STYLE = f"margin:8px 0 0;color:{MUTED};font-size:15px;line-height:1.8;"
-
-CARD_STYLE = (
-    f"position:relative;margin:14px 0 0;padding:16px 16px 14px;background:{PAPER};"
-    f"border:1px solid {ACCENT_LINE};box-shadow:0 10px 24px rgba(92,74,16,0.05);"
-)
-CARD_NOTCH_STYLE = (
-    "position:absolute;right:-1px;bottom:-1px;width:22px;height:22px;"
-    f"border-right:1px solid {ACCENT_LINE};border-bottom:1px solid {ACCENT_LINE};"
-    f"background:{PAPER};transform:rotate(-45deg) translate(9px,9px);"
-)
-CARD_TITLE_STYLE = f"margin:0 0 10px;color:{INK};font-size:22px;font-weight:700;line-height:1.5;"
-SUBHEAD_STYLE = (
-    f"margin:14px 0 6px;color:{ACCENT_INK};font-size:16px;font-weight:700;line-height:1.7;"
-    "border-left:4px solid rgba(171,211,224,0.95);padding-left:8px;"
-)
-PARA_STYLE = f"margin:8px 0;color:{INK};font-size:15px;line-height:1.9;"
-LEDE_STYLE = (
-    f"margin:10px 0 14px;border-top:5px solid {ACCENT};border-right:5px solid {ACCENT};"
-    f"background:{ACCENT_SOFT};padding:10px 12px 10px 14px;"
-)
-LEDE_TAG_STYLE = (
-    "display:inline-block;margin:0 0 6px;padding:3px 9px;background:rgba(245,200,51,0.75);"
-    "color:#fff;font-size:14px;letter-spacing:.08em;"
-)
-LEDE_TEXT_STYLE = f"margin:0;color:{INK};font-size:15px;line-height:1.9;"
-# 字段行对齐 H5 在手机上的表现：标签独占一行，取值在下一行（@media max-width:640px）
-META_ROW_STYLE = f"margin:7px 0;color:{INK};font-size:15px;line-height:1.75;word-break:break-word;overflow-wrap:anywhere;"
-META_LABEL_STYLE = f"display:block;margin:0 0 2px;color:{MUTED};font-size:13px;letter-spacing:.04em;"
-=======
 PAGE_STYLE = "margin:0 auto;padding:0 0 8px;background:#fffaf0;color:#3d3525;font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue','PingFang SC','Microsoft YaHei',sans-serif;line-height:1.75;font-size:15px;"
 HERO_STYLE = "margin:0 0 18px;padding:22px 18px 20px;border:1px solid #ead9a8;background:#fff3c4;border-radius:12px;"
 HERO_MARK_STYLE = "display:inline-block;margin-bottom:8px;padding:3px 8px;background:#f96e57;color:#fff;border-radius:999px;font-size:12px;letter-spacing:.08em;"
@@ -134,7 +43,6 @@ LEDE_STYLE = "margin:10px 0;padding:10px 12px;background:#fff0df;border-left:4px
 LEDE_TAG_STYLE = "margin:0 0 4px;color:#f96e57;font-size:13px;font-weight:700;"
 META_ROW_STYLE = "margin:5px 0;color:#4f432f;font-size:14px;line-height:1.65;"
 META_LABEL_STYLE = "display:inline-block;margin-right:6px;color:#8f7a49;font-weight:700;"
->>>>>>> 319500b94447db31f5ff354bce92613fd8c603cb
 TIME_VALUE_STYLE = "color:#f96e57;font-weight:700;"
 LINK_STYLE = "color:#2f6f9f;text-decoration:underline;word-break:break-all;"
 BULLET_STYLE = "margin:6px 0 6px 1em;color:#443929;font-size:15px;line-height:1.7;"
@@ -224,13 +132,7 @@ def _render_markdown_table(table_lines: List[str]) -> str:
     return f"<section style=\"{TABLE_WRAP_STYLE}\"><table style=\"{TABLE_STYLE}\"><thead><tr>{head}</tr></thead><tbody>{rows_html}</tbody></table></section>"
 
 
-def markdown_to_wechat_inline_html(
-    markdown_text: str,
-    markdown_path: str = "",
-    *,
-    hero_badge_src: str = "",
-    hero_meta: str = "",
-) -> str:
+def markdown_to_wechat_inline_html(markdown_text: str, markdown_path: str = "") -> str:
     blocks: List[str] = [f"<section style=\"{PAGE_STYLE}\">"]
     section_open = False
     card_open = False
@@ -266,25 +168,9 @@ def markdown_to_wechat_inline_html(
         blocks.append(f"<h3 style=\"{CARD_TITLE_STYLE}\">{html.escape(title)}</h3>")
         card_open = True
 
-<<<<<<< HEAD
-    hero_banner = ""
-    if hero_badge_src:
-        hero_banner = (
-            f"<img src=\"{html.escape(hero_badge_src)}\" alt=\"万有预报\" "
-            f"style=\"{HERO_BANNER_STYLE}\" />"
-        )
-    blocks.append(f"<section style=\"{HERO_BAR_STYLE}\"></section>")
-    blocks.append(f"<section style=\"{HERO_STYLE}\">")
-    blocks.append(f"<h1 style=\"{H1_STYLE}\">{PAGE_TITLE}</h1>")
-    if hero_meta:
-        blocks.append(f"<p style=\"{HERO_META_STYLE}\">{html.escape(hero_meta)}</p>")
-    if hero_banner:
-        blocks.append(hero_banner)
-=======
     blocks.append(f"<section style=\"{HERO_STYLE}\">")
     blocks.append(f"<span style=\"{HERO_MARK_STYLE}\">清物语 · 物理系风格</span>")
     blocks.append(f"<p style=\"{SUBTITLE_STYLE}\">清华大学物理系校园信息整理</p>")
->>>>>>> 319500b94447db31f5ff354bce92613fd8c603cb
     blocks.append("</section>")
 
     lines = (markdown_text or "").splitlines()
