@@ -76,14 +76,31 @@ python skills/wanyou-llm-filter/scripts/run_wanyou_llm_filter.py "$INTEGRATION_D
 
 ### 阶段 5 —— 导出 H5
 
+导出前先做一次 Markdown 预处理，把图片路径落地（正文一个字都不会改，只改 `![](...)` 里的路径）：
+
 ```bash
-python skills/wanyou-richtext-export/scripts/run_wanyou_richtext_export.py "$INTEGRATION_DIR/wanyou_combined.md" --skip-agent-payload --title "万有预报"
+python scripts/prepare_xiumi_markdown.py "$INTEGRATION_DIR/wanyou_combined.md"
 ```
 
-记下打印的 `html_path:`。这个 H5 右下角有一个「复制到公众号」按钮，点一下就把**全内联样式正文**送进剪贴板（`text/html` + `text/plain`），到公众号后台正文区 Ctrl+V，样式／卡片／表格／图片都跟着走。
+它会打印「残留 data:image ...（必须为 0）」和「仍找不到：N 张」，产出 `wanyou_combined_xiumi.md`。然后拿预处理后的这份导出：
+
+```bash
+python skills/wanyou-richtext-export/scripts/run_wanyou_richtext_export.py "$INTEGRATION_DIR/wanyou_combined_xiumi.md" --skip-agent-payload --title "万有预报"
+```
+
+记下打印的 `html_path:`，同时核对紧跟着的两行验收输出：
+
+```text
+html_images: total=12 inline=12 remote=0 local=0 size=1,060,776 bytes
+html_self_contained: yes（HTML 可单独移动，图片全内联）
+```
+
+`local` 必须是 0。**产物是单文件自包含的**：页面本体和复制源两条渲染路径的 `<img>` 都内联成 `data:`，把 HTML 单独拷到别处（发给别人、丢共享盘、删掉整个 `output/`）双击仍能看图。`local` 非零时脚本以退出码 1 失败并列出那些 `src` —— 这就是「Markdown 把 `module_lib_20260927_0752` 吃掉下划线变成 `modulelib202609270752`」那个坑，回去跑上面的预处理再导出，别改内联样式。确实要留本地路径时加 `--allow-local-images`，降级为警告（但那个 HTML 不能单独移动）。
+
+这个 H5 右下角有一个「复制到公众号」按钮，点一下就把**全内联样式正文**送进剪贴板（`text/html` + `text/plain`），到公众号后台正文区 Ctrl+V，样式／卡片／表格／图片都跟着走。
 
 - 复制源由 `generators/wechat_inline.py` 生成，和手工粘进编辑器的是同一份；
-- 图片在导出时已压到最长边 900px 并转成 `data:` 内嵌（`wanyou/inline_images.py`），**不需要先把图上传到任何地方**；
+- 两条路径的图片都在导出时压到最长边 900px 并转成 `data:` 内嵌（`wanyou/inline_images.py`），**不需要先把图上传到任何地方**；
 - 浏览器没有 `navigator.clipboard` 时自动回退到「选中隐藏容器 + `execCommand('copy')`」；
 - **正文里刻意不用 `<a href>`**：公众号编辑器会把 `mp.weixin.qq.com` 的链接当「图文消息」校验归属，不是本号的推送就弹「请勿插入不合法的图文消息链接」。`链接` 字段渲染成纯文本，下划线和颜色还在，只是不可点。
 - **底色只有两类**：页面/卡片/表格都是同一个 `#ffffff`，点缀块用 `rgba(245,200,51,α)` 黄染。微信深色模式会单独反转「纯白」元素，底色亮度不一致就会出现「卡片黑了、外面还亮」的割裂。别再引入 `#f6f2e8`、`#fffdf6` 这类近白——H5 可以用米色，复制源不行。
@@ -96,7 +113,7 @@ python skills/wanyou-richtext-export/scripts/run_wanyou_richtext_export.py "$INT
 
 用户说「秀米只能粘纯文本」时，不要以为是生成的 HTML 坏了，也不要去改内联样式，直接跑阶段 6。
 
-**先跑一遍 Markdown 预处理**，它会做三件推秀米必需的事（见 `scripts/prepare_xiumi_markdown.py` 的模块 docstring）：把内嵌 `data:` 图片落地成本地文件、把相对路径改成绝对路径、把被 Markdown 吃掉下划线的路径（`module_lib_20260927_0752` → `modulelib202609270752`）模糊匹配回真实文件。
+**Markdown 预处理的产物就是阶段 5 用的那份 `wanyou_combined_xiumi.md`**——它把内嵌 `data:` 图片落地成本地文件、把相对路径改成绝对路径、把被 Markdown 吃掉下划线的路径模糊匹配回真实文件。阶段 5 已经跑过就不必重复；如果是单独补推秀米，先跑：
 
 ```bash
 python scripts/prepare_xiumi_markdown.py "$INTEGRATION_DIR/wanyou_combined.md"
@@ -223,7 +240,7 @@ python scripts/publish_xiumi_draft.py "xxx.html" --title "标题" --preserve-sty
 1. 先看抓取：`*_raw.md` 判断来源是否完整。
 2. 再看 ranked raw：`*_ranked_raw.md` 判断 LLM 选题质量。
 3. 再看合成稿：`*.md` 判断文字与栏目是否正确。
-4. 导出：打开 `*.html` 确认富文本渲染。
+4. 导出：先看 `html_images` 的 `local` 是否为 0 与 `html_self_contained: yes`，再打开 `*.html` 确认富文本渲染；也可把 HTML 单独拷到另一个目录打开，验证图片仍然在。
 5. 秀米：加 `--xiumi-dry-run` 可只跑不保存；诊断看 `output/xiumi_debug/*.jsonl`。
 6. 某个 agent 挂了不影响其他来源，先看它的输出报错。
 7. 物理系栏目在 LLM 文本清洗阶段会被跳过（保留原始摘要）。

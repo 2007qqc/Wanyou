@@ -148,6 +148,9 @@ def ensure_debug_browser(port=None, profile_dir=None, wait_seconds=25):
     profile_path.mkdir(parents=True, exist_ok=True)
     chrome = find_chrome()
     print(f"公众号：启动调试 Chrome（端口 {port}，profile {profile_path}）")
+    from wanyou.browser import chromium_needs_no_sandbox
+
+    extra_args = ["--no-sandbox", "--disable-gpu-sandbox"] if chromium_needs_no_sandbox() else []
     subprocess.Popen(
         [
             chrome,
@@ -155,6 +158,7 @@ def ensure_debug_browser(port=None, profile_dir=None, wait_seconds=25):
             f"--user-data-dir={profile_path}",
             "--no-first-run",
             "--no-default-browser-check",
+            *extra_args,
             "https://weread.qq.com/",
         ],
         stdout=subprocess.DEVNULL,

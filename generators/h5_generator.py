@@ -812,6 +812,20 @@ def export_h5(markdown_path: str, output_path: str, title: str = "") -> str:
         title=title,
         copy_source_html=copy_source_html,
     )
+    # 页面本体也要自包含：<img> 默认写的是相对输出目录的路径，把 HTML 单独拷贝到
+    # 别处（发给自己、塞进共享盘、丢掉 output/ 目录）就会整页断图。这里把页面里的
+    # 本地 <img> 同样压成 data:，最终产物是单文件、双击即可看。复制源里的 data:
+    # 会被跳过，不会重复嵌入。
+    html_text, page_image_stats = embed_local_images(
+        html_text,
+        base_dir=os.path.dirname(os.path.abspath(output_path)),
+    )
+    page_remaining = int(page_image_stats.get("remaining_local") or 0)
+    if page_remaining:
+        print(
+            f"[page] {page_remaining} 张本地图片没能内嵌（超出预算或读取失败），"
+            "HTML 单独移动后这些图片会找不到"
+        )
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     with open(output_path, "w", encoding="utf-8") as f:
         f.write(html_text)

@@ -31,6 +31,17 @@ def browser_supports_profile_dir(browser_name: str) -> bool:
     return browser_name in CHROMIUM_BROWSERS
 
 
+def chromium_needs_no_sandbox() -> bool:
+    """是否给 Chromium 关掉自带 sandbox。
+
+    在受限/嵌套沙箱的宿主里（DSH、部分 CI 容器），浏览器自己的 sandbox 初始化失败，
+    driver 只会报 "session not created" 之类的下游症状（tab crashed / DevToolsActivePort
+    不存在）。这类环境用 WANYOU_CHROMIUM_NO_SANDBOX=1 显式放开，默认保持安全设置。
+    """
+    flag = (os.environ.get("WANYOU_CHROMIUM_NO_SANDBOX", "") or "").strip().lower()
+    return flag in {"1", "true", "yes", "on"}
+
+
 def make_browser_options(browser_name: str, profile_dir: str, *, headless: bool = False, detach: bool = False):
     if browser_name == "safari":
         options = SafariOptions()
@@ -58,6 +69,9 @@ def make_browser_options(browser_name: str, profile_dir: str, *, headless: bool 
     options.add_argument("--disable-dev-shm-usage")
     if browser_name == "edge":
         options.add_argument("--disable-features=msEdgeSidebarV2,EdgeWalletCheckout,msPdfAadIntegration")
+    if chromium_needs_no_sandbox():
+        options.add_argument("--no-sandbox")
+        options.add_argument("--disable-gpu-sandbox")
     options.add_argument(f"--user-data-dir={profile_dir}")
     try:
         options.add_experimental_option("excludeSwitches", ["enable-logging"])
