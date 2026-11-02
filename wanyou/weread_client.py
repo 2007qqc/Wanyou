@@ -17,8 +17,10 @@
   让用户在打开的 Chrome 窗口里手动过一次就恢复，**不是接口下线**，也不是限流。
 * ``-2003`` 的真实含义是**参数格式错误**（errMsg 会明写），最常见的原因就是
   bookId 没传对——**别照字面当成限流**，先核对实际发出去的 URL。
-* ``originalId`` 里的 ``~`` 是 base64url 的下划线（weread 的 rid 用 ``_`` 做分隔符），
-  还原成 ``_`` 才能拼出打得开的原文链接。
+* ``originalId`` 是微信读书自己的 rid，**不是**公众号短链 id，拼不出可用的原文链接
+  （拼出来是「参数错误」页）。mpInfo 里没有任何原文链接字段，所以本模块不产出链接。
+* 正文只能用列表接口自带的 ``mpInfo.content``：它是文章开头的一段（最多约 1000 字，
+  常见只有十几字），要更长的正文得换数据源。
 """
 
 import json
@@ -99,6 +101,39 @@ ADD_TO_SHELF_JS = """
     .catch(function(e){ cb("ERR:" + e) });
 """
 
+# 整篇正文 + 正文图片。列表接口只给几十字节选；/web/mp/content 返回公众号文章
+# 的完整页面（DOM 里 .rich_media_content 是正文），能拿到活动日期与报名二维码图片。
+CONTENT_JS = r"""
+  const cb = arguments[arguments.length - 1];
+  fetch("/web/mp/content?reviewId=" + encodeURIComponent(arguments[0]), {credentials: "include"})
+    .then(function(r){ return r.text(); })
+    .then(function(html){
+      try {
+        const doc = new DOMParser().parseFromString(html, "text/html");
+        const container = doc.querySelector(".rich_media_content")
+                       || doc.querySelector(".rich_media_area_primary");
+        if (!container) { cb(JSON.stringify({ok: false})); return; }
+        const text = (container.innerText || container.textContent || "")
+          .replace(/\s+/g, " ").trim();
+        const walker = doc.createTreeWalker(
+          container, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT, null);
+        const images = [];
+        let recent = "";
+        let node;
+        while ((node = walker.nextNode())) {
+          if (node.nodeType === 3) {
+            recent = (recent + " " + node.textContent).replace(/\s+/g, " ").slice(-300);
+          } else if (node.tagName === "IMG") {
+            const src = node.getAttribute("data-src") || node.getAttribute("src") || "";
+            if (src) { images.push({src: src, ctx: recent.trim()}); }
+          }
+        }
+        cb(JSON.stringify({ok: true, text: text, images: images}));
+      } catch (e) { cb("ERR:" + e); }
+    })
+    .catch(function(e){ cb("ERR:" + e); });
+"""
+
 
 def _chrome_candidates():
     return [
@@ -148,9 +183,6 @@ def ensure_debug_browser(port=None, profile_dir=None, wait_seconds=25):
     profile_path.mkdir(parents=True, exist_ok=True)
     chrome = find_chrome()
     print(f"公众号：启动调试 Chrome（端口 {port}，profile {profile_path}）")
-    from wanyou.browser import chromium_needs_no_sandbox
-
-    extra_args = ["--no-sandbox", "--disable-gpu-sandbox"] if chromium_needs_no_sandbox() else []
     subprocess.Popen(
         [
             chrome,
@@ -158,7 +190,6 @@ def ensure_debug_browser(port=None, profile_dir=None, wait_seconds=25):
             f"--user-data-dir={profile_path}",
             "--no-first-run",
             "--no-default-browser-check",
-            *extra_args,
             "https://weread.qq.com/",
         ],
         stdout=subprocess.DEVNULL,
@@ -190,7 +221,26 @@ def attach(port=None):
     service = Service(str(driver_path)) if driver_path.exists() else Service()
     driver = webdriver.Chrome(options=options, service=service)
     driver.set_script_timeout(45)
+    _focus_weread_tab(driver)
     return driver
+
+
+def _focus_weread_tab(driver):
+    """把会话切到 weread.qq.com 那个标签页。
+
+    调试 Chrome 里除了微信读书，常常还开着 Chrome 自己弹的下载/更新页，Selenium
+    默认挂到第一个 page target 上。这时页面内 fetch("/web/shelf/sync") 会发到那个
+    页面的 origin（实测打到 www.google.com，回来是 404 的 HTML），报错却长得像
+    「接口返回了非 JSON 内容」——真正的原因是挂错了标签页。
+    """
+    try:
+        for handle in driver.window_handles:
+            driver.switch_to.window(handle)
+            if str(driver.current_url or "").startswith("https://weread.qq.com"):
+                return True
+    except Exception:
+        return False
+    return False
 
 
 def probe(driver):
@@ -284,21 +334,26 @@ def fetch_account_articles(driver, book_id, reader_url, days_limit, max_pages=2)
                 if not title:
                     continue
                 timestamp = int(review.get("createTime") or group_time or 0)
-                original_id = str(info.get("originalId") or "")
-                url = (
-                    "https://mp.weixin.qq.com/s/" + original_id.replace("~", "_")
-                    if original_id
-                    else ""
-                )
-                if not url or url in seen:
+                # originalId 是微信读书自己的 rid（WR1AzlG...，五十多字符），**不是**公众号
+                # 文章的短链 id。拼成 https://mp.weixin.qq.com/s/<id> 会返回 200，但页面正文
+                # 是「参数错误」——之前那批 链接 全是这么来的。接口返回的 mpInfo 里也没有
+                # 任何可用的原文链接字段（只有 avatar/cover/title/content/originalId/…），
+                # 所以这里不产出链接：宁可没有，也不要给读者一个打不开的地址。
+                url = ""
+                key = f"{title}|{timestamp}"
+                if key in seen:
                     continue
-                seen.add(url)
+                seen.add(key)
                 items.append(
                     {
                         "title": title,
                         "url": url,
+                        # 微信读书的列表接口自带一段内文（mpInfo.content），实测最多约
+                        # 1000 字、常见只有十几字；完整正文由 fetch_article_contents 补齐。
+                        "content": str(info.get("content") or "").strip(),
                         "digest": str(info.get("digest") or ""),
                         "cover": str(info.get("cover") or ""),
+                        "review_id": str(review.get("reviewId") or sub.get("reviewId") or ""),
                         "timestamp": timestamp,
                         "aid": None,
                         "mid": None,
@@ -312,6 +367,44 @@ def fetch_account_articles(driver, book_id, reader_url, days_limit, max_pages=2)
             break
         time.sleep(2)
     items.sort(key=lambda item: item.get("timestamp") or 0, reverse=True)
+    return items
+
+
+def fetch_article_contents(driver, items, cutoff_ts=None):
+    """给列表里的文章补全整篇正文与图片（就地修改 item）。
+
+    列表接口只给节选；这里逐条打 /web/mp/content 拿完整正文。失败单条跳过，
+    不影响整批；正文长度上限由 config.WECHAT_FULL_CONTENT_MAX_CHARS 控制。
+    """
+    max_chars = int(getattr(config, "WECHAT_FULL_CONTENT_MAX_CHARS", 8000) or 8000)
+    updated = 0
+    total = len(items)
+    for index, item in enumerate(items, start=1):
+        review_id = str(item.get("review_id") or "").strip()
+        timestamp = int(item.get("timestamp") or 0)
+        if not review_id or (cutoff_ts and timestamp and timestamp < cutoff_ts):
+            continue
+        title = (item.get("title") or "无标题")[:32]
+        try:
+            raw = driver.execute_async_script(CONTENT_JS, review_id)
+            payload = json.loads(raw) if isinstance(raw, str) and raw.startswith("{") else {}
+        except Exception:
+            payload = {}
+        text = str(payload.get("text") or "").strip()
+        if not payload.get("ok") or not text:
+            print(f"公众号：全文获取跳过 {index}/{total}：{title}")
+            continue
+        item["content_excerpt"] = item.get("content") or ""
+        item["content"] = text[:max_chars]
+        item["content_source"] = "weread_full"
+        item["image_entries"] = [
+            entry
+            for entry in (payload.get("images") or [])
+            if isinstance(entry, dict) and str(entry.get("src") or "").strip()
+        ]
+        updated += 1
+        print(f"公众号：全文获取 {index}/{total}：{title}（{len(text)} 字，{len(item['image_entries'])} 图）")
+    print(f"公众号：正文全文补全 {updated}/{total} 篇")
     return items
 
 
@@ -351,6 +444,10 @@ def collect_articles(days_limit=None, *, port=None, profile_dir=None, max_pages=
             for item in items:
                 item["account_keyword"] = name
             all_items.extend(items)
+
+        if getattr(config, "WECHAT_FULL_CONTENT_ENABLED", True) and all_items:
+            cutoff_ts = time.time() - days_limit * 86400
+            fetch_article_contents(driver, all_items, cutoff_ts=cutoff_ts)
         return all_items
     finally:
         # 只断开 chromedriver，不关浏览器——登录态和人机校验的信任都留在那个窗口里。

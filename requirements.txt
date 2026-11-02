@@ -3,4 +3,5 @@ selenium>=4.20.0
 html2text>=2024.2.26
 pypandoc>=1.13
 zhipuai>=2.1.5
-pillow>=10.0
+numpy>=1.24.0
+opencv-python-headless>=4.8.0

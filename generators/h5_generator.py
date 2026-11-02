@@ -5,9 +5,8 @@ import shutil
 from typing import Dict, List, Tuple
 
 import config
+from generators.text_spans import highlight_time_spans
 from wanyou.image_paths import clean_markdown_image_target, is_remote_or_data_image, resolve_existing_image_path
-from wanyou.inline_images import embed_local_images
-from wanyou.markdown_tables import table_to_blocks
 
 
 THEME_SOURCE_DIR = os.path.normpath(
@@ -28,18 +27,6 @@ THEME_BADGE_MINI_ALT = "物理系风格标识-页尾"
 HEADER_TITLE_LINE = "**万有预报**"
 HEADER_SUBTITLE_LINE = "*清华大学物理系校园信息整理*"
 FOOTER_LINE = "*万有预报，下期再见。*"
-SECTION_LEADS = {
-    "教务通知": "这周和课程、选课、学业节奏直接相关的更新，先看这里。",
-    "家园网信息": "生活层面的提醒和安排放在这一栏，方便课间快速扫一眼。",
-    "图书馆信息": "图书馆的新讲座、资源和训练营，适合顺手加入本周计划。",
-    "新清华学堂": "这一周值得出门听一场、看一场的内容，集中放在这里。",
-    "物理系学术报告": "楼里的报告会是这一期的重头戏，尽量把关键信息和气质都保留下来。",
-    "学生会信息": "和校园活动、同学权益更贴近的消息，统一收在这一栏。",
-    "青年科协信息": "如果你关心科创、沙龙和项目机会，这一栏通常最有料。",
-    "学生社团信息": "社团活动和招新动向，适合按兴趣挑着看。",
-    "学生公益信息": "和志愿服务、公益行动相关的消息，整理在这里。",
-    "其他公众号信息": "其他重点公众号里的校园动态，也顺手汇总在这里。",
-}
 META_LABELS = {
     "日期",
     "时间",
@@ -108,10 +95,69 @@ def ensure_theme_assets(target_path: str) -> Dict[str, str]:
 
 
 
+HIGHLIGHTS_TITLE_LINE = "# 本期要点速递"
+
+
+def _fallback_highlights(text: str, limit: int = 5) -> List[str]:
+    """从各栏目的要点透视里挑当期最值得先看的几条（没有 LLM 时用）。"""
+    picks: List[str] = []
+    for section in re.split(r"^# ", text or "", flags=re.M)[1:]:
+        title = section.split("\n")[0].strip()
+        lede = re.search(r"要点透视：(.+)", section)
+        if lede:
+            sentence = re.split(r"[。；]", lede.group(1).strip())[0]
+            if sentence:
+                picks.append(f"{sentence}（{title}）")
+        if len(picks) >= limit:
+            break
+    return picks
+
+
+_BULLET_PREFIX_RE = re.compile(r"^\s*(?:[-•·*]|\d{1,2}\s*[.、)])\s*")
+
+
+def _strip_bullet_marker(line: str) -> str:
+    """去掉行首的 "-"、序号，但绝不能碰「10月31日」里的数字。"""
+    return _BULLET_PREFIX_RE.sub("", line).strip()
+
+
+def _build_highlights(text: str, limit: int = 5) -> List[str]:
+    """给「本期要点速递」写 5 条，只要当期最该先知道的事。"""
+    ledes = re.findall(r"要点透视：(.+)", text or "")
+    if not ledes:
+        return []
+    if getattr(config, "LLM_ENABLED", False):
+        try:
+            from wanyou.utils_llm import chat_complete
+
+            result = chat_complete(
+                "你在为清华大学物理系《万有预报》写开头的「本期要点速递」。\n"
+                f"从下面这些要点里挑 {limit} 条最该先知道的（临近截止、时间临近、影响面大的优先），\n"
+                "每条不超过 38 字，写成一句话，保留日期，不要编号、不要句号，按重要性排序。\n"
+                "只输出若干行，每行一条。",
+                "\n".join(ledes)[:4000],
+                temperature=0,
+                task_label="正在写本期要点速递",
+            )
+        except Exception:
+            result = ""
+        bullets = [_strip_bullet_marker(line) for line in (result or "").splitlines() if line.strip()]
+        bullets = [b for b in bullets if 6 <= len(b) <= 60][:limit]
+        if bullets:
+            return bullets
+    return _fallback_highlights(text, limit)
+
+
 def _strip_previous_theme_markers(text: str) -> str:
     cleaned = re.sub(r"^!\[[^\]]*\]\(_theme/(?:cover\.jpg|divider\.png|badge\.png|badge-mini\.png)\)\s*$", "", text, flags=re.M)
     for marker in (HEADER_TITLE_LINE, HEADER_SUBTITLE_LINE, FOOTER_LINE):
         cleaned = re.sub(r"^" + re.escape(marker) + r"\s*$", "", cleaned, flags=re.M)
+    cleaned = re.sub(
+        r"^" + re.escape(HIGHLIGHTS_TITLE_LINE) + r"\s*$[\s\S]*?(?=^# |\Z)",
+        "",
+        cleaned,
+        flags=re.M,
+    )
     cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
     return cleaned.strip()
 
@@ -132,8 +178,13 @@ def decorate_markdown_with_theme(markdown_text: str, markdown_path: str) -> str:
         parts.append(f"![{THEME_BADGE_ALT}]({badge_rel})")
         parts.append("")
 
-    parts.append(HEADER_TITLE_LINE)
     parts.append(HEADER_SUBTITLE_LINE)
+    parts.append("")
+    # 报头不再放「万有预报」大标题（推送标题里已经有了），改成当期速递
+    parts.append(HIGHLIGHTS_TITLE_LINE)
+    parts.append("")
+    for bullet in _build_highlights(text):
+        parts.append(f"- {bullet}")
     parts.append("")
     parts.append(text)
     parts.append("")
@@ -202,97 +253,33 @@ def _is_table_separator(text: str) -> bool:
     return bool(re.match(r"^\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)+\|?\s*$", text.strip()))
 
 
-_URL_ONLY_RE = re.compile(r"^https?://\S+$")
-_MD_ESCAPE_RE = re.compile(r"\\([\\`*{}\[\]()#+\-.!_>|~])")
-
-
-def _unescape_md(text: str) -> str:
-    """还原「1\\. 测试项目」这类被 Markdown 转义的标点。"""
-    return _MD_ESCAPE_RE.sub(r"\1", text or "")
-
-
-_EMPTY_META_RE = re.compile(r"^([^:：]{1,12})[:：]\s*$")
-
-
-def _empty_meta_label(text: str) -> str:
-    """「日期:」「票价:」这种标签独占一行、值写在接下来的行里。"""
-    match = _EMPTY_META_RE.match((text or "").strip())
-    if not match:
-        return ""
-    label = match.group(1).strip()
-    return label if label in META_LABELS else ""
-
-
-def _collect_meta_values(lines: List[str], start: int, limit: int = 4) -> Tuple[List[str], int]:
-    """从 `start` 起收集标签的取值：连续的 `- ` 列表项，或者紧跟的一行正文。"""
-    values: List[str] = []
-    index = start
-    while index < len(lines) and len(values) < limit:
-        candidate = lines[index].strip()
-        if not candidate:
-            if values:
-                break
-            index += 1
-            continue
-        if candidate.startswith("- "):
-            values.append(candidate[2:].strip())
-            index += 1
-            continue
-        if not values:
-            values.append(candidate)
-            index += 1
-        break
-    return values, index
-
-
-def _table_cell_html(text: str) -> str:
-    value = (text or "").strip()
-    if not value:
-        return ""
-    if _URL_ONLY_RE.match(value):
-        escaped = html.escape(value, quote=True)
-        return f"<a href='{escaped}'>{html.escape(value)}</a>"
-    return html.escape(value)
+def _split_table_row(text: str) -> List[str]:
+    stripped = text.strip().strip("|")
+    cells = re.split(r"(?<!\\)\|", stripped)
+    return [cell.replace(r"\|", "|").strip() for cell in cells]
 
 
 def _render_markdown_table(table_lines: List[str]) -> str:
-    """窄表→固定列宽表格，宽表→一行一卡（理由见 wanyou/markdown_tables.py）。"""
-    plan = table_to_blocks(table_lines)
-    mode = plan.get("mode")
-
-    if mode == "table":
-        colgroup = "".join(f"<col style='width:{width}%' />" for width in plan["widths"])
-        head_html = ""
-        if plan.get("show_header", True):
-            head_html = "<thead><tr>" + "".join(f"<th>{_table_cell_html(cell)}</th>" for cell in plan["header"]) + "</tr></thead>"
-        body_html = "\n".join(
-            "<tr>" + "".join(f"<td>{_table_cell_html(cell)}</td>" for cell in row) + "</tr>"
-            for row in plan["rows"]
-        )
-        return (
-            "<div class='table-wrap'><table class='info-table'>"
-            f"<colgroup>{colgroup}</colgroup>"
-            f"{head_html}"
-            f"<tbody>{body_html}</tbody>"
-            "</table></div>"
-        )
-
-    if mode == "cards":
-        parts = ["<div class='table-cards'>"]
-        for card in plan["cards"]:
-            parts.append("<div class='table-card'>")
-            if card["title"]:
-                parts.append(f"<p class='table-card-title'>{_table_cell_html(card['title'])}</p>")
-            for field in card["fields"]:
-                parts.append(
-                    f"<p class='table-card-row'><span class='table-card-label'>{html.escape(field['label'])}</span>"
-                    f"{_table_cell_html(field['value'])}</p>"
-                )
-            parts.append("</div>")
-        parts.append("</div>")
-        return "".join(parts)
-
-    return ""
+    rows = [line for line in table_lines if _is_table_row(line) and not _is_table_separator(line)]
+    if not rows:
+        return ""
+    parsed = [_split_table_row(line) for line in rows]
+    max_cols = max(len(row) for row in parsed)
+    for row in parsed:
+        row.extend([""] * (max_cols - len(row)))
+    header = parsed[0]
+    body = parsed[1:]
+    head_html = "".join(f"<th>{html.escape(cell)}</th>" for cell in header)
+    body_html = "\n".join(
+        "<tr>" + "".join(f"<td>{html.escape(cell)}</td>" for cell in row) + "</tr>"
+        for row in body
+    )
+    return (
+        "<div class='table-wrap'><table class='info-table'>"
+        f"<thead><tr>{head_html}</tr></thead>"
+        f"<tbody>{body_html}</tbody>"
+        "</table></div>"
+    )
 
 
 def _is_time_like_label(label: str) -> bool:
@@ -310,19 +297,11 @@ def _is_time_like_label(label: str) -> bool:
 
 
 def _highlight_time_text(text: str) -> str:
-    escaped = html.escape(text or "")
-    patterns = [
-        r"20\d{2}[\u5e74\-/.]\d{1,2}[\u6708\-/.]\d{1,2}(?:\u65e5)?",
-        r"\d{1,2}\u6708\d{1,2}\u65e5(?:\s*[\uff08(][^\uff09)]*[\uff09)])?(?:\s*(?:\u5468|\u661f\u671f)[\u4e00\u4e8c\u4e09\u56db\u4e94\u516d\u65e5\u5929])?",
-        r"(?:\u5468|\u661f\u671f)[\u4e00\u4e8c\u4e09\u56db\u4e94\u516d\u65e5\u5929]",
-        r"\d{1,2}[:\uff1a]\d{2}(?:\s*[-~\u81f3\u5230]\s*\d{1,2}[:\uff1a]\d{2})?",
-        r"(?:\u4eca\u5929|\u660e\u5929|\u540e\u5929|\u4eca\u665a|\u4eca\u65e9|\u4eca\u6668|\u672c\u5468|\u672c\u5468\u5185|\u4e0b\u5468|\u8fd1\u671f|\u5373\u65e5\u8d77)",
-        r"\u622a\u6b62\u81f3?\s*\d{1,2}\u6708\d{1,2}\u65e5",
-    ]
-    combined = re.compile("(" + "|".join(patterns) + ")")
-    return combined.sub(r"<span class='time-highlight'>\1</span>", escaped)
+    # 规则表在 generators/text_spans.py，和秀米内联那条链路共用一份。
+    return highlight_time_spans(html.escape(text or ""))
 
 
+<<<<<<< HEAD
 # ── 一键复制到秀米 / 公众号 ─────────────────────────────────────────────────
 # 公众号和秀米只认内联 style，所以复制源直接用 wechat_inline 产出的那份内联
 # HTML —— 和手工粘进编辑器的是同一份，保证「所复即所粘」。页面本体仍是带 class
@@ -442,6 +421,9 @@ def markdown_to_h5_html(
     hero_badge_src: str = "",
     hero_meta: str = "",
 ) -> str:
+=======
+def markdown_to_h5_html(markdown_text: str, markdown_path: str, output_path: str, title: str = "") -> str:
+>>>>>>> 319500b94447db31f5ff354bce92613fd8c603cb
     page_title = _safe_title(title)
     theme_assets = ensure_theme_assets(output_path)
     badge_rel = ""
@@ -455,19 +437,8 @@ def markdown_to_h5_html(
     article_open = False
     section_open = False
 
-    pending: List[str] = []
-
-    def flush_paragraph():
-        """把连续正文行攒成一段（Markdown 软换行），避免一屏碎行、段距忽大忽小。"""
-        nonlocal pending
-        if not pending:
-            return
-        blocks.append("<p>" + "<br />".join(html.escape(_unescape_md(line)) for line in pending) + "</p>")
-        pending = []
-
     def close_article():
         nonlocal article_open
-        flush_paragraph()
         if article_open:
             blocks.append("</article>")
             article_open = False
@@ -485,7 +456,6 @@ def markdown_to_h5_html(
         raw_line = lines[index]
         stripped = _maybe_fix_mojibake(raw_line)
         if _is_table_row(stripped) and index + 1 < len(lines) and _is_table_separator(_maybe_fix_mojibake(lines[index + 1])):
-            flush_paragraph()
             table_lines = [stripped, _maybe_fix_mojibake(lines[index + 1])]
             index += 2
             while index < len(lines) and _is_table_row(_maybe_fix_mojibake(lines[index])):
@@ -500,7 +470,6 @@ def markdown_to_h5_html(
             while lookahead < len(lines) and not _maybe_fix_mojibake(lines[lookahead]).strip():
                 lookahead += 1
             if lookahead < len(lines) and _is_table_separator(_maybe_fix_mojibake(lines[lookahead])):
-                flush_paragraph()
                 table_lines = [stripped, _maybe_fix_mojibake(lines[lookahead])]
                 index = lookahead + 1
                 while index < len(lines):
@@ -518,12 +487,10 @@ def markdown_to_h5_html(
                 continue
         index += 1
         if _should_skip_line(stripped):
-            flush_paragraph()
             continue
 
         image_match = re.match(r"!\[([^\]]*)\]\(([^)]+)\)", stripped)
         if image_match:
-            flush_paragraph()
             alt = _maybe_fix_mojibake(image_match.group(1).strip())
             src = html.escape(_resolve_image_src(image_match.group(2), markdown_path, output_path))
             if alt in {THEME_BADGE_ALT, THEME_BADGE_MINI_ALT}:
@@ -532,21 +499,17 @@ def markdown_to_h5_html(
             continue
 
         if stripped in {HEADER_TITLE_LINE, HEADER_SUBTITLE_LINE, FOOTER_LINE}:
-            flush_paragraph()
             continue
 
         if stripped.startswith("# "):
-            if stripped[2:].strip() in {"万有预报", page_title}:
-                flush_paragraph()
-                continue
             close_section()
             current_section = stripped[2:].strip()
-            lead = SECTION_LEADS.get(current_section, "把这部分内容整理成更接近人工编辑版公众号的阅读卡片。")
+            # 栏目导语已去掉：硬编码的导语每期重复、和卡片内容重复，且常与当期事实
+            # 矛盾（十月还写「天气渐暖」）。栏目头保留 kicker + 标题即可。
             blocks.append("<section class='section'>")
             blocks.append("<div class='section-head'>")
             blocks.append("<span class='section-kicker'>本期栏目</span>")
             blocks.append(f"<h2>{html.escape(current_section)}</h2>")
-            blocks.append(f"<p class='section-lead'>{html.escape(lead)}</p>")
             blocks.append("</div>")
             section_open = True
             continue
@@ -560,13 +523,11 @@ def markdown_to_h5_html(
             continue
 
         if stripped.startswith("### "):
-            flush_paragraph()
             blocks.append(f"<h4 class='subhead'>{html.escape(stripped[4:].strip())}</h4>")
             continue
 
         label, value = _split_label_value(stripped)
         if label == "要点透视":
-            flush_paragraph()
             blocks.append(
                 "<div class='lede-box'>"
                 "<div class='lede-tag'>要点透视</div>"
@@ -575,7 +536,6 @@ def markdown_to_h5_html(
             )
             continue
         if label in META_LABELS:
-            flush_paragraph()
             rendered_value = _highlight_time_text(value) if _is_time_like_label(label) else html.escape(value)
             if label == "链接" and re.match(r"^https?://", value):
                 rendered_value = f"<a href='{html.escape(value)}'>{html.escape(value)}</a>"
@@ -586,50 +546,28 @@ def markdown_to_h5_html(
                 f"<p class='meta-row'><span class='meta-label'>{html.escape(label)}</span><span class='{value_class}'>{rendered_value}</span></p>"
             )
             continue
-        # 「日期:」独占一行、值在下面 —— 不接住就会变成「正文 + 两条列表」
-        empty_label = _empty_meta_label(stripped)
-        if empty_label:
-            meta_values, next_index = _collect_meta_values(lines, index)
-            if meta_values:
-                flush_paragraph()
-                joined = " / ".join(meta_values)
-                rendered_value = _highlight_time_text(joined) if _is_time_like_label(empty_label) else html.escape(joined)
-                value_class = "meta-value"
-                if empty_label in {"日期", "时间", "发布日期", "报告时间"}:
-                    value_class += " is-highlight"
-                blocks.append(
-                    f"<p class='meta-row'><span class='meta-label'>{html.escape(empty_label)}</span>"
-                    f"<span class='{value_class}'>{rendered_value}</span></p>"
-                )
-                index = next_index
-                continue
 
         if re.match(r"^https?://", stripped):
-            flush_paragraph()
             url = html.escape(stripped)
             blocks.append(f"<p class='link-row'><a href='{url}'>{url}</a></p>")
             continue
 
         if stripped.startswith(("- ", "• ")):
-            flush_paragraph()
             bullet_text = stripped[2:].strip()
-            blocks.append(f"<p class='bullet'>{html.escape(bullet_text)}</p>")
+            blocks.append(f"<p class='bullet'>{_highlight_time_text(bullet_text)}</p>")
             continue
 
         emphasis_text = _strip_markdown_emphasis(stripped)
         if emphasis_text != stripped:
-            flush_paragraph()
             blocks.append(f"<p class='note'><strong>{html.escape(emphasis_text)}</strong></p>")
             continue
 
         if stripped.startswith("*"):
-            flush_paragraph()
             blocks.append(f"<p class='note'>{html.escape(stripped.lstrip('*').strip())}</p>")
             continue
 
-        pending.append(stripped)
+        blocks.append(f"<p>{_highlight_time_text(stripped)}</p>")
 
-    flush_paragraph()
     close_section()
     body_html = "\n".join(blocks)
 
@@ -646,10 +584,6 @@ def markdown_to_h5_html(
     footer_badge = ""
     if badge_mini_rel:
         footer_badge = f"<img class='footer-badge' src='{html.escape(badge_mini_rel)}' alt='物理系风格标识' loading='lazy' />"
-
-    # 只有拿到内联正文才挂复制按钮；没有就不往页面里塞死代码
-    copy_css = _COPY_CSS if copy_source_html else ""
-    copy_block = build_copy_block(copy_source_html) if copy_source_html else ""
 
     return f'''<!DOCTYPE html>
 <html lang="zh-CN">
@@ -674,7 +608,6 @@ def markdown_to_h5_html(
     * {{ box-sizing: border-box; }}
     body {{
       margin: 0;
-      overflow-x: hidden;
       background:
         radial-gradient(circle at top right, rgba(245, 200, 51, 0.12), transparent 24%),
         radial-gradient(circle at left 20%, rgba(171, 211, 224, 0.18), transparent 18%),
@@ -735,17 +668,12 @@ def markdown_to_h5_html(
     .note {{ color: var(--ink); font-size: 14px; }}
     .bullet {{ position: relative; padding-left: 1.1em; }}
     .bullet::before {{ content: "•"; position: absolute; left: 0; color: var(--accent-ink); }}
-    .table-wrap {{ margin: 12px 0; padding: 10px; border: 1px solid rgba(213, 165, 28, 0.45); border-radius: 8px; background: #fffdf6; }}
-    .info-table {{ width: 100%; max-width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 13px; line-height: 1.65; }}
-    .info-table th, .info-table td {{ padding: 8px 7px; border-bottom: 1px solid rgba(213, 165, 28, 0.22); text-align: left; vertical-align: top; word-break: break-word; overflow-wrap: anywhere; }}
-    .info-table tbody tr:nth-child(even) {{ background: #fffaf4; }}
-    .info-table th {{ border-bottom: 1px solid rgba(213, 165, 28, 0.45); background: rgba(245, 200, 51, 0.22); color: var(--accent-ink); font-weight: 700; }}
+    .table-wrap {{ margin: 12px 0; overflow-x: auto; border: 1px solid rgba(213, 165, 28, 0.45); border-radius: 8px; background: #fffdf6; }}
+    .info-table {{ width: 100%; border-collapse: collapse; min-width: 420px; font-size: 14px; line-height: 1.65; }}
+    .info-table th, .info-table td {{ padding: 8px 10px; border-bottom: 1px solid rgba(213, 165, 28, 0.26); border-right: 1px solid rgba(213, 165, 28, 0.18); text-align: left; vertical-align: top; }}
+    .info-table th {{ background: rgba(245, 200, 51, 0.18); color: var(--accent-ink); font-weight: 700; }}
     .info-table tr:last-child td {{ border-bottom: 0; }}
-    .table-cards {{ margin: 10px 0 0; }}
-    .table-card {{ margin: 8px 0 0; padding: 10px 12px; border-left: 3px solid var(--accent); background: #fffaf0; border-radius: 0 8px 8px 0; }}
-    .table-card-title {{ margin: 0 0 6px; color: var(--accent-ink); font-size: 14px; font-weight: 700; line-height: 1.55; word-break: break-word; overflow-wrap: anywhere; }}
-    .table-card-row {{ margin: 0; padding: 2px 0; font-size: 13.5px; line-height: 1.7; word-break: break-word; overflow-wrap: anywhere; }}
-    .table-card-label {{ display: inline-block; min-width: 4.8em; margin-right: 6px; color: var(--muted); font-weight: 700; }}
+    .info-table th:last-child, .info-table td:last-child {{ border-right: 0; }}
     a {{ color: #8b5600; text-decoration: none; border-bottom: 1px solid rgba(139, 86, 0, 0.24); }}
     .figure {{ margin: 12px 0 4px; text-align: center; }}
     .figure img {{ display: inline-block; max-width: 100%; border-radius: 10px; border: 1px solid rgba(62, 62, 62, 0.08); }}
@@ -765,15 +693,26 @@ def markdown_to_h5_html(
       .meta-row {{ display: block; }}
       .meta-label {{ display: block; min-width: 0; margin-bottom: 2px; }}
     }}
-    {copy_css}
   </style>
 </head>
 <body>
   <main class="page">
     <header class="hero">
+<<<<<<< HEAD
       <h1>{html.escape(page_title)}</h1>
       {hero_meta_html}
       {hero_banner}
+=======
+      <div class="hero-top">
+        {hero_badge}
+        <div>
+          <span class="hero-mark">清物语 · 物理系风格</span>
+          <p class="hero-sub">清华大学物理系校园信息整理</p>
+        </div>
+      </div>
+      <p>参考人工编辑版万有预报的公众号排版节奏，保留物理系熟悉的暖黄色标签、纸片感信息卡和系内识别贴图，让自动生成的版本也尽量像一篇认真整理过的推送。</p>
+      <div class="hero-note">天气渐暖，大家注意增减衣物。以下内容按栏目整理，方便直接转成物理系风格的万有预报。</div>
+>>>>>>> 319500b94447db31f5ff354bce92613fd8c603cb
     </header>
     {body_html}
     <footer class="page-footer">
@@ -781,7 +720,6 @@ def markdown_to_h5_html(
       <div class="footer-note">本期万有预报到这里就结束了。<br />万有预报，下期再见。</div>
     </footer>
   </main>
-  {copy_block}
 </body>
 </html>
 '''
@@ -806,6 +744,7 @@ def export_h5(markdown_path: str, output_path: str, title: str = "") -> str:
     with open(markdown_path, "r", encoding="utf-8") as f:
         markdown_text = f.read()
 
+<<<<<<< HEAD
     # 延迟导入：wechat_inline 依赖本模块的常量，模块级导入会成环
     from generators.wechat_inline import markdown_to_wechat_inline_html
     from wanyou import academic_calendar
@@ -856,6 +795,9 @@ def export_h5(markdown_path: str, output_path: str, title: str = "") -> str:
             f"[page] {page_remaining} 张本地图片没能内嵌（超出预算或读取失败），"
             "HTML 单独移动后这些图片会找不到"
         )
+=======
+    html_text = markdown_to_h5_html(markdown_text, markdown_path=markdown_path, output_path=output_path, title=title)
+>>>>>>> 319500b94447db31f5ff354bce92613fd8c603cb
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     with open(output_path, "w", encoding="utf-8") as f:
         f.write(html_text)

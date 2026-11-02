@@ -11,7 +11,7 @@ from wanyou.prompt_preferences import (
     RAW_RANKING_SCORE_GUIDE,
     RAW_RANKING_TRAINING_EXAMPLES,
 )
-from wanyou.synthesizer import parse_markdown_document
+from wanyou.markdown_document import parse_markdown_document
 from wanyou.utils_html import _rule_clean_markdown, clean_crawled_markdown
 from wanyou.utils_issue_filter import current_issue_cutoff, parse_datetime_text
 from wanyou.utils_llm import chat_complete
@@ -358,6 +358,7 @@ def _score_section_items(section_name: str, items: List[dict]) -> Dict[str, dict
 def build_ranked_raw_markdown(markdown_text: str, current_markdown_path: str = "", *, clean_with_llm: bool = False) -> str:
     _ = current_markdown_path
     rendered_sections = []
+    wechat_sections = set(getattr(config, "WECHAT_SECTIONS", []) or [])
     for section in parse_markdown_document(markdown_text):
         section_name = section.get("title", "")
         items = []
@@ -365,7 +366,12 @@ def build_ranked_raw_markdown(markdown_text: str, current_markdown_path: str = "
             title = item.get("title", "")
             raw_content = "\n".join(item.get("body_lines", [])).strip()
             candidate = {"title": title, "content": raw_content}
-            keep, reason, basis = _is_recent_publish(candidate)
+            if section_name in wechat_sections:
+                # 公众号条目在采集阶段已按发布时间窗口筛过，且成稿不写发布日期，
+                # 这里不再用“发布日期”二次过滤（否则会把活动日期误当发布日期）。
+                keep, reason, basis = True, "wechat_prefiltered", ""
+            else:
+                keep, reason, basis = _is_recent_publish(candidate)
             log_filter_decision(
                 section=section_name,
                 title=title,

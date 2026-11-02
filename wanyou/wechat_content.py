@@ -280,10 +280,26 @@ def _clone_session_with_auth(session):
     return cloned
 
 
+def _detail_from_inline_text(text):
+    """用列表接口自带的内文直接组 detail，不再走 mp.weixin.qq.com。"""
+    return {
+        "content": str(text or "").strip(),
+        "content_format": "plain",
+        "image_urls": [],
+        "image_ocr_texts": [],
+        "image_llm_types": [],
+        "publish_time": "",
+        "author": "",
+    }
+
+
 def _fetch_item_detail_job(index, total, item, timeout, sleep_seconds, auth_session):
     url = item.get("url")
     title = (item.get("title") or "无标题")[:40]
     account = item.get("account_keyword") or "未知公众号"
+    inline = str(item.get("content") or "").strip()
+    if inline:
+        return index, _detail_from_inline_text(inline), f"公众号：正文取自微信读书内文 {index}/{total}：{account} - {title}"
     if not url:
         return index, {}, f"公众号：跳过无链接推送 {index}/{total}：{account} - {title}"
 
@@ -305,6 +321,11 @@ def enrich_items_with_content(session, items, timeout, sleep_seconds):
             url = item.get("url")
             title = (item.get("title") or "无标题")[:40]
             account = item.get("account_keyword") or "未知公众号"
+            inline = str(item.get("content") or "").strip()
+            if inline:
+                print(f"公众号：正文取自微信读书内文 {idx}/{total}：{account} - {title}")
+                item.update(_detail_from_inline_text(inline))
+                continue
             if not url:
                 print(f"公众号：跳过无链接推送 {idx}/{total}：{account} - {title}")
                 continue

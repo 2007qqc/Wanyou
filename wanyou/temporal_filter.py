@@ -3,7 +3,7 @@ import datetime as dt
 import re
 from typing import Dict, List, Optional
 
-from wanyou.run_clock import effective_run_datetime
+from wanyou.run_clock import effective_publish_datetime, effective_run_datetime
 from wanyou.utils_issue_filter import current_issue_cutoff, parse_datetime_text
 
 DEADLINE_KEYWORDS = [
@@ -105,8 +105,17 @@ def assess_temporal_relevance(
     fallback_publish_date: str = "",
     now: Optional[dt.datetime] = None,
     cutoff: Optional[dt.datetime] = None,
+    expiry_now: Optional[dt.datetime] = None,
 ) -> Dict[str, object]:
+    """判断一条信息是否还值得放进这一期。
+
+    `now` 指本期的覆盖窗口（WANYOU_RUN_DATE），用来判断「发布时间够不够新」；
+    `expiry_now` 指**见刊日**（默认窗口结束后那个周一），用来判断「截止时间/活动时间
+    是不是已经过了」。两个时钟分开是必须的：公众号文章可能是 10.19 发的（对窗口来说
+    很新），但它报名的活动 10.22 就结束了，见刊时已经过期。
+    """
     current = now or effective_run_datetime()
+    expiry = expiry_now or effective_publish_datetime()
     issue_cutoff = cutoff or current_issue_cutoff(current)
     signals = extract_temporal_signals(text, fallback_publish_date=fallback_publish_date, now=current)
     deadlines = _parsed_datetimes(signals, "deadline")
@@ -116,18 +125,29 @@ def assess_temporal_relevance(
 
     if deadlines:
         latest = max(deadlines)
+        # 见刊日当天的截止时间不再保留：这一期在见刊日早上发，读者看到时当天
+        # 的截止往往已经进入最后时限/已经处理过；往期也出现过把“次周周一截止”
+        # 当成有效截止的情况，而那天正是报纸刊登日。
+        keep = latest.date() > expiry.date()
+        if keep:
+            reason = "deadline_active"
+        elif latest.date() == expiry.date():
+            reason = "deadline_on_publish_day"
+        else:
+            reason = "deadline_expired"
         return {
-            "keep": latest >= current,
-            "reason": "deadline_active" if latest >= current else "deadline_expired",
+            "keep": keep,
+            "reason": reason,
             "basis": latest.isoformat(timespec="minutes"),
             "signals": signals,
             "cutoff": issue_cutoff.isoformat(timespec="minutes"),
             "now": current.isoformat(timespec="minutes"),
+            "expiry_now": expiry.isoformat(timespec="minutes"),
         }
 
     if events:
         latest = max(events)
-        grace = current - dt.timedelta(hours=12)
+        grace = expiry - dt.timedelta(hours=12)
         return {
             "keep": latest >= grace,
             "reason": "event_active" if latest >= grace else "event_expired",
@@ -135,11 +155,12 @@ def assess_temporal_relevance(
             "signals": signals,
             "cutoff": issue_cutoff.isoformat(timespec="minutes"),
             "now": current.isoformat(timespec="minutes"),
+            "expiry_now": expiry.isoformat(timespec="minutes"),
         }
 
     if publishes:
         latest = max(publishes)
-        future_mentions = [value for value in mentions if value >= current - dt.timedelta(hours=12)]
+        future_mentions = [value for value in mentions if value >= expiry - dt.timedelta(hours=12)]
         if latest < issue_cutoff and future_mentions:
             basis = max(future_mentions)
             return {
@@ -149,6 +170,7 @@ def assess_temporal_relevance(
                 "signals": signals,
                 "cutoff": issue_cutoff.isoformat(timespec="minutes"),
                 "now": current.isoformat(timespec="minutes"),
+                "expiry_now": expiry.isoformat(timespec="minutes"),
             }
         return {
             "keep": latest >= issue_cutoff,
@@ -157,6 +179,7 @@ def assess_temporal_relevance(
             "signals": signals,
             "cutoff": issue_cutoff.isoformat(timespec="minutes"),
             "now": current.isoformat(timespec="minutes"),
+            "expiry_now": expiry.isoformat(timespec="minutes"),
         }
 
     return {
@@ -166,10 +189,5 @@ def assess_temporal_relevance(
         "signals": signals,
         "cutoff": issue_cutoff.isoformat(timespec="minutes"),
         "now": current.isoformat(timespec="minutes"),
+        "expiry_now": expiry.isoformat(timespec="minutes"),
     }
-
-
-def should_drop_by_temporal_relevance(text: str, fallback_publish_date: str = "") -> Dict[str, object]:
-    assessment = assess_temporal_relevance(text=text, fallback_publish_date=fallback_publish_date)
-    assessment["drop"] = not bool(assessment.get("keep"))
-    return assessment

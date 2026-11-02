@@ -6,7 +6,6 @@ import os
 import platform
 
 from wanyou.env_loader import load_project_env
-from wanyou.prompt_preferences import KEEP_DROP_PREFERENCE_RULES
 
 load_project_env()
 
@@ -34,7 +33,6 @@ HEADLESS = True
 PAGE_LOAD_TIMEOUT = 30
 PAGE_LOAD_STRATEGY = "eager"
 WAIT_TIMEOUT = 15
-SLEEP_SECONDS = 3
 UNIFIED_AUTH_MANUAL_WAIT_SECONDS = 600
 SELENIUM_BROWSER = os.environ.get(
     "WANYOU_SELENIUM_BROWSER",
@@ -53,12 +51,6 @@ UNIFIED_AUTH_PROFILE_DIR = os.environ.get(
 )
 
 # 日期/时间窗口
-DAYS_WINDOW_INFO = 300
-DAYS_WINDOW_MYHOME = 300
-DAYS_WINDOW_LIB = 300
-HALL_RECENT_DAYS = 14
-LIB_EVENT_YEAR_ROLL_DAYS = 350
-PHYSICS_REPORT_RECENT_DAYS = 21
 NOTICE_PREFILTER_CUTOFF = ""
 
 # 站点 URL
@@ -106,7 +98,6 @@ PANDOC_RESOURCE_PATH_TEMPLATE = "--resource-path={images_dir}"
 OUTPUT_DOCX_ENABLED = True
 OUTPUT_H5_ENABLED = True
 OUTPUT_AGENT_PAYLOAD_ENABLED = True
-OUTPUT_HTML_NAME_SUFFIX = ".html"
 H5_TITLE = "万有预报"
 RAW_COLLECTION_MODE = False
 RAW_SKIP_LLM_CLEAN = False
@@ -119,6 +110,8 @@ WECHAT_ACCOUNT_KEYWORDS = [
     "清华青年科创",
     "清华大学学生会",
     "清华大学学生会权益服务中心",
+    "清华大学学生社团",
+    "清华大学学生公益",
 ]
 WECHAT_ACCOUNT_KEYWORD = WECHAT_ACCOUNT_KEYWORDS[0]
 WECHAT_FAKEID = ""
@@ -137,6 +130,9 @@ WECHAT_SOURCE = os.environ.get("WECHAT_SOURCE", "weread").strip().lower()
 WEREAD_ACCOUNT_BOOK_IDS = [
     "MP_WXS_3531191868",  # 清华大学学生会
     "MP_WXS_3089010740",  # 清华青年科创
+    # bookId = "MP_WXS_" + base64decode(__biz) 中的数字部分；下面两个号已实测可订阅、可取列表。
+    "MP_WXS_2398854781",  # 清华大学学生社团（__biz=MjM5ODg1NDc4MQ==）
+    "MP_WXS_2394734625",  # 清华大学学生公益（__biz=MjM5NDczNDYyNQ==）
 ]
 WEREAD_DEBUG_PORT = _env_int("WEREAD_DEBUG_PORT", 9333)
 # 登录态和人机校验的信任都留在这个 profile 里，换目录就得重新扫码。
@@ -144,18 +140,18 @@ WEREAD_PROFILE_DIR = os.environ.get("WEREAD_PROFILE_DIR", "output/selenium_cache
 WEREAD_CHROME_PATH = os.environ.get("WEREAD_CHROME_PATH", "")
 # 一页 = 20 次群发（实测一个号一页覆盖约 15 天），所以 2 页足够一周且只发 2 次请求。
 WEREAD_MAX_PAGES = _env_int("WEREAD_MAX_PAGES", 2)
+# 微信读书列表接口只给正文节选（常见几十字），/web/mp/content?reviewId=... 能拿到
+# 整篇正文和图片。打开全文后，时效判断能解析活动日期，报名二维码也能提取出来。
+WECHAT_FULL_CONTENT_ENABLED = _env_bool("WECHAT_FULL_CONTENT_ENABLED", True)
+WECHAT_FULL_CONTENT_MAX_CHARS = _env_int("WECHAT_FULL_CONTENT_MAX_CHARS", 8000)
+# 报名二维码：从正文图片里识别（OpenCV QR 检测），落到本地后作为图片附在卡片里。
+WECHAT_QR_ENABLED = _env_bool("WECHAT_QR_ENABLED", True)
+WECHAT_QR_MAX_IMAGES = _env_int("WECHAT_QR_MAX_IMAGES", 2)
+WECHAT_QR_MAX_CANDIDATES = _env_int("WECHAT_QR_MAX_CANDIDATES", 6)
+WECHAT_QR_IMAGE_DIR = os.environ.get("WECHAT_QR_IMAGE_DIR", "output/wechat_qr")
 
-# 兼容旧配置（当前脚本不再使用）
-WECHAT_BIZ = ""
-WECHAT_APPMSG_LIST_URL = ""
+# 公众号抓取/输出
 WECHAT_OUTPUT_FORMAT = "md"
-WECHAT_PAGE_SIZE = 10
-WECHAT_MAX_PAGES = 20
-WECHAT_MAX_ARTICLES = 3
-WECHAT_FETCH_CONTENT = True
-WECHAT_CONTENT_FORMAT = "md"
-WECHAT_COOKIE_ENV = "WECHAT_COOKIE"
-WECHAT_COOKIE_PROMPT = True
 WECHAT_REQUEST_TIMEOUT = 15
 WECHAT_SLEEP_SECONDS = 1
 WECHAT_DOWNLOAD_MAX_WORKERS = 16
@@ -252,18 +248,8 @@ LLM_FORCE_NO_KEYWORDS = [
     "研究生",
     "博士生",
 ]
-LLM_SYSTEM_PROMPT = (
-    "你是清华大学物理系学生会的权益助理。"
-    + "请根据标题、日期、站点和摘要判断该信息是否值得进入“万有预报”。"
-    + KEEP_DROP_PREFERENCE_RULES
-    + "优先保留物理系相关信息、全校性重大教务安排、奖学金、SRT、选退课和高价值学术活动。"
-    + "优先剔除教师招聘、纯研究生通知、重复公示、一般通识讲座和影响范围很小的临时信息。"
-    + "只输出 YES 或 NO，不要输出其他内容。"
-)
 
 # LLM 内容合成
-LLM_SUMMARY_ENABLED = False
-LLM_SUMMARY_MAX_CHARS = 100
 FINAL_MARKDOWN_LLM_CLEAN_ENABLED = _env_bool("FINAL_MARKDOWN_LLM_CLEAN_ENABLED", True)
 XIUMI_IMAGE_MODE = os.environ.get("XIUMI_IMAGE_MODE", "upload").strip().lower()
 XIUMI_MAX_INLINE_IMAGE_HTML_CHARS = _env_int("XIUMI_MAX_INLINE_IMAGE_HTML_CHARS", 900000)
@@ -278,27 +264,47 @@ XIUMI_IMAGE_UPLOAD_STALL_SECONDS = _env_int("XIUMI_IMAGE_UPLOAD_STALL_SECONDS", 
 XIUMI_IMAGE_MAX_BYTES = _env_int("XIUMI_IMAGE_MAX_BYTES", 1_000_000)
 # 降采样时的最长边上限（像素）。手机端正文宽度约 700px，1600 足够清晰。
 XIUMI_IMAGE_MAX_DIMENSION = _env_int("XIUMI_IMAGE_MAX_DIMENSION", 1600)
-LLM_SUMMARY_SYSTEM_PROMPT = (
-    "你是清华大学物理系学生会“万有预报”编辑助理。"
-    "请将通知压缩成 100 字以内的中文要点摘要，突出和本科生有关的时间、地点、对象、报名或截止信息。"
+# 公众号条目：把「要点透视」和「摘要」按功能拆开写。
+#   要点透视 = 形式信息（对象、时间、地点、报名/截止），像一张速览卡；
+#   摘要 = 内容信息（项目/活动简介、比赛或活动流程、亮点）。
+# 两者都要求短：要点透视一行、摘要一两句，避免过去两条几乎同文互相重复。
+WECHAT_BRIEF_SYSTEM_PROMPT = (
+    "你在为清华大学物理系《万有预报》整理一条公众号条目，需要把「要点透视」和「摘要」分开写。\n"
+    "「要点透视」只写形式信息：对象（面向谁/谁参加）、时间（哪天几点）、地点（在哪）、报名或截止时间。"
+    "每项用分号隔开，不写活动介绍；材料没有的信息直接省略，不要写「未提及」「未交代」；"
+    "不超过 40 字。\n"
+    "「摘要」只写内容信息：这是什么活动或项目、项目简介、比赛或活动流程、亮点。"
+    "不重复对象、时间、地点；不写编者视角（材料、原文、来源为、日期显示为、公众号、推送、标题）；"
+    "不超过 80 字。\n"
+    "两段都要短、要有信息量，不要空话和客套话。\n"
+    '只输出 JSON：{"lede":"要点透视","digest":"摘要"}，不要输出任何其他内容。'
 )
+WECHAT_LEDE_MAX_CHARS = _env_int("WECHAT_LEDE_MAX_CHARS", 45)
+WECHAT_SUMMARY_MAX_CHARS = _env_int("WECHAT_SUMMARY_MAX_CHARS", 110)
+# 人工补链接表（标题<TAB>mp 链接，可选）：weread 不返回原文地址，这个文件存在就优先用它。
+# 公众号时效闸门：日期解析不出来时交给 LLM 判，不确定即弃（防过期推送混入）
+WECHAT_FRESHNESS_GATE = True
+WECHAT_LINKS_TSV = "output/week6_20261019/wechat_links.tsv"
+# 公众号栏目的固定顺序；公众号链路和最终清洗阶段共用这一份名单。
+WECHAT_SECTIONS = [
+    "学生会信息",
+    "青年科协信息",
+    "学生社团信息",
+    "学生公益信息",
+    "其他公众号信息",
+]
+# 拿不到原文链接时先占位，方便人工在成稿里替换
+WECHAT_LINK_PLACEHOLDER = "〔原文链接待补〕"
 LLM_TRANSITION_ENABLED = False
 LLM_TRANSITION_SYSTEM_PROMPT = (
     "你是“万有预报”文案助手。"
-    "请根据栏目内容写一句自然衔接语，风格简洁、温和、校园化。"
-    "如果本栏目没有内容，请写一句自然的“本周暂无相关信息”类过渡句。"
+    "请用一句话（不超过 18 字）说明本栏本周有哪些事，只陈述事实。"
+    "不要抒情、不要比喻、不要“先看这里/下面来看看”这类招呼语，不要重复卡片标题的措辞。"
+    "如果本栏目没有内容，请写“本周暂无相关信息”。"
 )
+# 只保留空栏目的兜底文案。有内容的栏目不再输出导语：按栏目硬编码的过渡句每期重复、
+# 与卡片标题重复，还常与当期事实矛盾（十月写「天气渐暖」），已从合成阶段移除。
 SECTION_DEFAULT_TRANSITIONS = {
-    "教务通知": "这周教务安排里有几条和课程节奏直接相关，大家记得看截止时间。",
-    "学生会信息": "学生会这边和同学权益、校园活动相关的消息放在这里。",
-    "青年科协信息": "科创和青年组织相关的动态，适合关注项目、讲座和实践机会的同学。",
-    "学生社团信息": "社团活动和招新消息集中在这一栏，方便大家按兴趣挑着看。",
-    "学生社区": "生活面的更新也整理在这里，适合课间快速扫一眼。",
-    "图书馆信息": "图书馆这边的活动和资源通知也很值得留意。",
-    "新清华学堂": "如果你想给一周安排一点文艺调剂，这一栏可以看看。",
-    "物理系学术报告": "天气渐暖，楼里的讲座也慢慢热闹起来了。",
-    "学生公益信息": "和志愿服务、公益活动有关的消息整理在这里。",
-    "其他公众号信息": "下面这几条来自其他重点公众号，和校园动态联系更紧一些。",
     "EMPTY": "本周暂无相关信息，大家先安心上课。",
 }
 
@@ -316,3 +322,6 @@ XIUMI_EDITOR_URL = os.environ.get("XIUMI_EDITOR_URL", "https://xiumi.us/studio/v
 XIUMI_PROFILE_DIR = "./output/selenium_cache/xiumi-profile"
 XIUMI_LOGIN_WAIT_SECONDS = 600
 XIUMI_SAVE_WAIT_SECONDS = 30
+
+# 不允许脚本自动点登录（会跳到微信扫码/授权页），登录由人自己完成
+XIUMI_LOGIN_AUTO_CLICK = False

@@ -5,6 +5,7 @@ from urllib.parse import urljoin, urlparse
 
 import html2text
 import config
+from wanyou.markdown_document import parse_markdown_document
 from wanyou.utils_llm import chat_complete
 
 
@@ -175,6 +176,16 @@ def html_to_markdown(container, base_url, session, images_dir, image_counter, im
 
 def _strip_residual_markup(text):
     cleaned = (text or "").replace("\ufeff", "")
+    # 图片语法先整体保护起来：图片路径里常有 `_wanyou_20261102_1123` 这类下划线，
+    # 后面的“去强调”正则会把成对下划线当斜体删掉，导致图片路径变成
+    # `images_wanyou...` 这种不存在的地址（秀米/DOCX 丢图）。
+    image_tokens = []
+
+    def _save_image(match):
+        image_tokens.append(match.group(0))
+        return f"@@WYIMG{len(image_tokens) - 1}@@"
+
+    cleaned = re.sub(r"!\[[^\]]*\]\([^)]*\)", _save_image, cleaned)
     cleaned = re.sub(r"(?is)<(script|style)[^>]*>.*?</\1>", " ", cleaned)
     cleaned = re.sub(r"(?i)<br\s*/?>", "\n", cleaned)
     cleaned = re.sub(r"(?i)</?(?:" + "|".join(BLOCK_TAGS) + r")[^>]*>", "\n", cleaned)
@@ -190,12 +201,11 @@ def _strip_residual_markup(text):
     cleaned = re.sub(r"(?<!_)__([^_\n]+)__(?!_)", r"\1", cleaned)
     cleaned = re.sub(r"(?<!\*)\*([^*\n]+)\*(?!\*)", r"\1", cleaned)
     cleaned = re.sub(r"(?<!_)_([^_\n]+)_(?!_)", r"\1", cleaned)
-    # 反斜杠转义：除了常见的 * _ # ` > -，正文里还有「1\. 测试项目」这种被
-    # html2text 转义的编号，不清掉会原样印在推送里
-    cleaned = re.sub(r"\\([\\`*{}\[\]()#+\-.!_>|~])", r"\1", cleaned)
+    cleaned = re.sub(r"\\([*_#`>\-])", r"\1", cleaned)
     cleaned = re.sub(r"\n[ \t]+", "\n", cleaned)
     cleaned = re.sub(r"[ \t]+\n", "\n", cleaned)
     cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+    cleaned = re.sub(r"@@WYIMG(\d+)@@", lambda match: image_tokens[int(match.group(1))], cleaned)
     return cleaned.strip()
 
 
@@ -300,36 +310,10 @@ def clean_crawled_markdown(text, source="", *, use_llm=False):
 
 
 def clean_markdown_document_with_llm(markdown_text, source_prefix="final"):
-    sections = []
-    current_section = None
-    current_item = None
-
-    def finish_item():
-        nonlocal current_item
-        if current_item is not None and current_section is not None:
-            current_section["items"].append(current_item)
-            current_item = None
-
-    for raw_line in (markdown_text or "").splitlines():
-        line = raw_line.rstrip()
-        if line.startswith("# "):
-            finish_item()
-            if current_section is not None:
-                sections.append(current_section)
-            current_section = {"title": line[2:].strip(), "items": []}
-            continue
-        if line.startswith("## "):
-            if current_section is None:
-                current_section = {"title": "未分类", "items": []}
-            finish_item()
-            current_item = {"title": line[3:].strip(), "body_lines": []}
-            continue
-        if current_item is not None:
-            current_item["body_lines"].append(raw_line)
-
-    finish_item()
-    if current_section is not None:
-        sections.append(current_section)
+    sections = parse_markdown_document(markdown_text)
+    # 物理系报告保留原始摘要；公众号条目的「要点透视/摘要」已经由公众号链路
+    # 写好并按形式/内容分工，再让 LLM 清洗容易把两段重写甚至把标题当正文抄一遍。
+    skip_llm_clean_sections = {"物理系学术报告", *getattr(config, "WECHAT_SECTIONS", [])}
 
     rendered_sections = []
     for section in sections:
@@ -342,7 +326,7 @@ def clean_markdown_document_with_llm(markdown_text, source_prefix="final"):
                     parts.append(f"## {title}")
                     parts.append("")
                 continue
-            preserve_original_summary = section.get("title") == "物理系学术报告"
+            preserve_original_summary = section.get("title") in skip_llm_clean_sections
             use_final_llm_clean = bool(getattr(config, "FINAL_MARKDOWN_LLM_CLEAN_ENABLED", False))
             cleaned = clean_crawled_markdown(
                 body,
@@ -357,7 +341,6 @@ def clean_markdown_document_with_llm(markdown_text, source_prefix="final"):
             parts.append("")
         rendered_sections.append("\n".join(parts).rstrip())
     return "\n\n".join(section for section in rendered_sections if section).strip() + "\n"
-
 
 
 def save_content(titles, full_texts, doc):
