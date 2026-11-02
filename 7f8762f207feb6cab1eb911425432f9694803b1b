@@ -1,0 +1,21 @@
+[还原说明] 本提交的原始信息在写入时被替换成了 ASCII '?'（0x3F），原文无法恢复。
+下面这段是根据同提交新增的 CHANGELOG.md 2026-11-02 条目与 git show 的 diff 重新整理的，
+不是作者原文，仅为让 git log 可读。
+
+feat: 通过 /web/mp/content 抓取公众号全文，并补齐时效与图片规则
+
+- 新增 /web/mp/content 全文抓取（weread_client.fetch_article_contents），
+  列表接口只给节选不再是时效判断与摘要质量的瓶颈
+- 新增 wechat_qr：按上下文筛选报名二维码，OpenCV 解码（带 logo 的群码用定位点兜底），
+  成稿插在「摘要」之后、「内容:」之前
+- 抽出 wechat_brief / markdown_document，wechat_pipeline 相应精简
+- 时效闸门改用正文日期并传入真实发布时间；截止日=见刊日不保留；
+  不在本期窗口发布的公告不选
+- 公众号卡片不再写推送日期；物理系报告卡片只写报告时间
+- 修复 _wanyou_… / _hall_… 图片路径被 Markdown 斜体吃掉下划线的丢图问题
+- 文档与依赖：README / AGENTS / 新增 CHANGELOG；requirements 增加
+  numpy、opencv-python-headless（缺依赖时二维码识别自动停用）
+- 新增 scripts/publish_wechat_draft.py（官方草稿箱接口），调整 publish_xiumi_draft.py
+
+原始作者：Xavier-Hill-L <LiuXinyu_THU@outlook.com>，提交时间 2026-11-02 11:04 UTC
+重建依据：CHANGELOG.md（同提交新增） + git show --numstat 7f8762f
