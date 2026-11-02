@@ -14,3 +14,10 @@
   `html_images: ... local=0` 与 `html_self_contained: yes`。`local` 非零时脚本退出码为 1。
 - 已知会导致 `local` 非零的原因：Markdown 吃掉了路径里的下划线（`module_lib_YYYYMMDD_HHMM` → `modulelibYYYYMMDDHHMM`），
   H5 生成器于是把不存在的路径原样写进 `src`。先跑 `scripts/prepare_xiumi_markdown.py` 再导出。
+
+## 页头元信息
+
+- 页头只剩三样：横幅图（仓库根目录 `badge.jpg`，固定文件名）、标题、一行元信息。
+- 元信息 = 生成时间 +（能拿到时的）校历周次，实现在 `wanyou/academic_calendar.py`。
+- 周次靠 info 教务通知的「第N周（周X）」+ 正文日期做锚点运算，**不用视觉模型读校历大图**（会把第 8 周读成第 4 周）。
+- 取不到就只输出生成时间。同日缓存 `output/.cache/academic_week.json`；`WANYOU_ACADEMIC_WEEK=off` 关掉整段逻辑。

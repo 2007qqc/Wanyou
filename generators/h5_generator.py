@@ -439,6 +439,8 @@ def markdown_to_h5_html(
     output_path: str,
     title: str = "",
     copy_source_html: str = "",
+    hero_badge_src: str = "",
+    hero_meta: str = "",
 ) -> str:
     page_title = _safe_title(title)
     theme_assets = ensure_theme_assets(output_path)
@@ -634,6 +636,13 @@ def markdown_to_h5_html(
     hero_badge = ""
     if badge_rel:
         hero_badge = f"<img class='hero-badge' src='{html.escape(badge_rel)}' alt='物理系风格标识' loading='lazy' />"
+    hero_banner = ""
+    if hero_badge_src:
+        hero_banner = (
+            f"<img class='hero-banner' src='{html.escape(hero_badge_src)}' "
+            "alt='万有预报' loading='lazy' />"
+        )
+    hero_meta_html = f"<p class='hero-meta'>{html.escape(hero_meta)}</p>" if hero_meta else ""
     footer_badge = ""
     if badge_mini_rel:
         footer_badge = f"<img class='footer-badge' src='{html.escape(badge_mini_rel)}' alt='物理系风格标识' loading='lazy' />"
@@ -698,11 +707,12 @@ def markdown_to_h5_html(
       background: var(--accent);
     }}
     .hero-top {{ display: flex; align-items: center; gap: 14px; margin-bottom: 12px; }}
+    .hero-banner {{ display: block; width: 100%; max-width: 100%; height: auto; margin: 16px 0 0; border-radius: 14px; }}
     .hero-badge {{ width: 68px; height: 68px; border-radius: 50%; flex: 0 0 auto; box-shadow: 0 10px 24px rgba(143, 106, 0, 0.12); background: #fff; }}
     .hero-mark {{ display: inline-flex; align-items: center; gap: 8px; padding: 5px 10px; border-radius: 999px; background: var(--accent-soft); color: var(--accent-ink); font-size: 12px; letter-spacing: 0.08em; }}
     .hero h1 {{ margin: 8px 0 0; font-size: 34px; line-height: 1.15; letter-spacing: 0.03em; }}
     .hero p {{ margin: 10px 0 0; color: var(--muted); line-height: 1.85; font-size: 15px; }}
-    .hero-note {{ margin-top: 16px; border-top: 4px solid var(--accent); background: #efefef; padding: 12px 14px; font-size: 14px; line-height: 1.8; border-radius: 0 0 16px 16px; }}
+    .hero .hero-meta {{ margin: 10px 0 0; color: var(--muted); font-size: 14px; line-height: 1.8; letter-spacing: 0.01em; }}
     .section {{ margin-top: 24px; }}
     .section-head {{ margin-bottom: 10px; }}
     .section-kicker {{ display: inline-block; margin-bottom: 8px; padding: 0.45em 0.8em; background: rgba(245, 200, 51, 0.7); color: #fff; font-size: 16px; letter-spacing: 0.08em; border-radius: 4px 0 0 4px; position: relative; }}
@@ -761,15 +771,9 @@ def markdown_to_h5_html(
 <body>
   <main class="page">
     <header class="hero">
-      <div class="hero-top">
-        {hero_badge}
-        <div>
-          <span class="hero-mark">清物语 · 物理系风格</span>
-          <h1>{html.escape(page_title)}</h1>
-        </div>
-      </div>
-      <p>参考人工编辑版万有预报的公众号排版节奏，保留物理系熟悉的暖黄色标签、纸片感信息卡和系内识别贴图，让自动生成的版本也尽量像一篇认真整理过的推送。</p>
-      <div class="hero-note">天气渐暖，大家注意增减衣物。以下内容按栏目整理，方便直接转成物理系风格的万有预报。</div>
+      <h1>{html.escape(page_title)}</h1>
+      {hero_meta_html}
+      {hero_banner}
     </header>
     {body_html}
     <footer class="page-footer">
@@ -784,14 +788,38 @@ def markdown_to_h5_html(
 
 
 
+HERO_BADGE_FILENAME = "badge.jpg"
+
+
+def hero_badge_source() -> str:
+    """页头横幅图的绝对路径（仓库根目录的 ``badge.jpg``）。
+
+    没有就返回空串、页头只留标题和元信息——不再回退别的文件名。
+    """
+
+    root = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+    path = os.path.join(root, HERO_BADGE_FILENAME)
+    return path.replace("\\", "/") if os.path.isfile(path) else ""
+
+
 def export_h5(markdown_path: str, output_path: str, title: str = "") -> str:
     with open(markdown_path, "r", encoding="utf-8") as f:
         markdown_text = f.read()
 
     # 延迟导入：wechat_inline 依赖本模块的常量，模块级导入会成环
     from generators.wechat_inline import markdown_to_wechat_inline_html
+    from wanyou import academic_calendar
 
-    copy_source_html = markdown_to_wechat_inline_html(markdown_text, markdown_path=markdown_path)
+    # 页头元信息：生成时间 +（实时从 info 抓到才算）校历周次
+    hero_meta = academic_calendar.summary_line()
+    hero_badge_src = hero_badge_source()
+
+    copy_source_html = markdown_to_wechat_inline_html(
+        markdown_text,
+        markdown_path=markdown_path,
+        hero_badge_src=hero_badge_src,
+        hero_meta=hero_meta,
+    )
     # 本地图片在粘贴时必然是断图，导出阶段就压成 data: 内嵌，让复制真正做到
     # 「不用上传」。压不动的（超大/读失败）保持原样，页面按钮会如实提示张数。
     copy_source_html, image_stats = embed_local_images(
@@ -811,6 +839,8 @@ def export_h5(markdown_path: str, output_path: str, title: str = "") -> str:
         output_path=output_path,
         title=title,
         copy_source_html=copy_source_html,
+        hero_badge_src=hero_badge_src,
+        hero_meta=hero_meta,
     )
     # 页面本体也要自包含：<img> 默认写的是相对输出目录的路径，把 HTML 单独拷贝到
     # 别处（发给自己、塞进共享盘、丢掉 output/ 目录）就会整页断图。这里把页面里的

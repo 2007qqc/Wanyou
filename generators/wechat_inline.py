@@ -70,6 +70,10 @@ HERO_MARK_STYLE = (
 )
 H1_STYLE = f"margin:8px 0 0;color:{INK};font-size:34px;font-weight:700;line-height:1.15;letter-spacing:.03em;"
 SUBTITLE_STYLE = f"margin:10px 0 0;color:{MUTED};font-size:15px;line-height:1.85;"
+HERO_BANNER_STYLE = (
+    "display:block;width:100%;max-width:100%;height:auto;margin:16px 0 0;border-radius:14px;"
+)
+HERO_META_STYLE = f"margin:10px 0 0;color:{MUTED};font-size:14px;line-height:1.8;"
 
 SECTION_STYLE = "margin:24px 0 0;padding:0;"
 # H5 的 kicker 是「药丸 + ::after 三角」；这里用「药丸 span + border 三角 span」拼同样的形状
@@ -285,7 +289,13 @@ def _render_markdown_table(table_lines: List[str]) -> str:
     return _render_table_layout(table_to_blocks(table_lines))
 
 
-def markdown_to_wechat_inline_html(markdown_text: str, markdown_path: str = "") -> str:
+def markdown_to_wechat_inline_html(
+    markdown_text: str,
+    markdown_path: str = "",
+    *,
+    hero_badge_src: str = "",
+    hero_meta: str = "",
+) -> str:
     blocks: List[str] = [f"<section style=\"{PAGE_STYLE}\">"]
     section_open = False
     card_open = False
@@ -340,11 +350,19 @@ def markdown_to_wechat_inline_html(markdown_text: str, markdown_path: str = "") 
         card_open = True
         card_title = title
 
+    hero_banner = ""
+    if hero_badge_src:
+        hero_banner = (
+            f"<img src=\"{html.escape(hero_badge_src)}\" alt=\"万有预报\" "
+            f"style=\"{HERO_BANNER_STYLE}\" />"
+        )
     blocks.append(f"<section style=\"{HERO_BAR_STYLE}\"></section>")
     blocks.append(f"<section style=\"{HERO_STYLE}\">")
-    blocks.append(f"<span style=\"{HERO_MARK_STYLE}\">清物语 · 物理系风格</span>")
     blocks.append(f"<h1 style=\"{H1_STYLE}\">{PAGE_TITLE}</h1>")
-    blocks.append(f"<p style=\"{SUBTITLE_STYLE}\">清华大学物理系校园信息整理</p>")
+    if hero_meta:
+        blocks.append(f"<p style=\"{HERO_META_STYLE}\">{html.escape(hero_meta)}</p>")
+    if hero_banner:
+        blocks.append(hero_banner)
     blocks.append("</section>")
 
     lines = (markdown_text or "").splitlines()

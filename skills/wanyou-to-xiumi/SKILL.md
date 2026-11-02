@@ -52,6 +52,12 @@ python scripts/publish_xiumi_draft.py output/xxx/wanyou_xxx.html --markdown outp
 
 ## 图片控制
 
+### 页头横幅也算一张图
+
+秀米这条路的正文来自 `generators/wechat_inline.py`（`_resolve_content_paths` 优先读 Markdown，再调它生成内联 HTML），所以**页头和 H5 完全一致**：标题 → 生成时间/校历周次 → 满宽横幅。页头横幅用的是仓库根目录 `badge.jpg` 的**本地绝对路径**（文件名固定），会和其他正文图一样走「粘贴转 CDN」，日志里同样记一条 `xiumi_image_cdn_inline`。
+
+这意味着推秀米前 `xiumi_image_cdn_inline` 的总数 = 正文本地图 + 页头横幅。别把页头图片改成 `data:`——秀米转不出 CDN 地址，保存后会被静默剥离，草稿页头就空了。
+
 | `XIUMI_IMAGE_MODE` | 行为 |
 |---|---|
 | `upload`（默认） | 本地图上传到秀米图库再回填地址，质量最好 |

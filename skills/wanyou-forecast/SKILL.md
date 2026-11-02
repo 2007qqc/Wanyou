@@ -91,11 +91,21 @@ python skills/wanyou-richtext-export/scripts/run_wanyou_richtext_export.py "$INT
 记下打印的 `html_path:`，同时核对紧跟着的两行验收输出：
 
 ```text
-html_images: total=12 inline=12 remote=0 local=0 size=1,060,776 bytes
+html_images: total=14 inline=14 remote=0 local=0 size=1,124,047 bytes
 html_self_contained: yes（HTML 可单独移动，图片全内联）
 ```
 
 `local` 必须是 0。**产物是单文件自包含的**：页面本体和复制源两条渲染路径的 `<img>` 都内联成 `data:`，把 HTML 单独拷到别处（发给别人、丢共享盘、删掉整个 `output/`）双击仍能看图。`local` 非零时脚本以退出码 1 失败并列出那些 `src` —— 这就是「Markdown 把 `module_lib_20260927_0752` 吃掉下划线变成 `modulelib202609270752`」那个坑，回去跑上面的预处理再导出，别改内联样式。确实要留本地路径时加 `--allow-local-images`，降级为警告（但那个 HTML 不能单独移动）。
+
+**页头长什么样**（`万有预报` 圆角卡片内，自上而下）：
+
+1. `万有预报` 标题；
+2. 一行元信息：`2026年11月2日 13:34 生成 · 2026-2027学年秋季学期第8周`；
+3. 满宽横幅图（仓库根目录 `badge.jpg`），占满卡片内容宽度、卡片底部、四周留 20px 白边。
+
+没有「清物语 · 物理系风格」胶囊，也没有「天气渐暖……」灰底卡片——这两块已经删掉，别再往模板里加回去。
+
+**校历周次是实时从 info 取的**（`wanyou/academic_calendar.py`）：登录统一身份认证，在教务通知里找「第N周（周X）」标题 + 正文「日期：YYYY年M月D日」，用这两个值算今天第几周。所以阶段 5 可能在导出时登录一次门户（约 40 秒），当天结果缓存在 `output/.cache/academic_week.json`。**取不到就不写周次**，只留生成时间——绝不猜。`WANYOU_ACADEMIC_WEEK=off` 可整段关掉。
 
 这个 H5 右下角有一个「复制到公众号」按钮，点一下就把**全内联样式正文**送进剪贴板（`text/html` + `text/plain`），到公众号后台正文区 Ctrl+V，样式／卡片／表格／图片都跟着走。
 
@@ -129,6 +139,8 @@ python scripts/publish_xiumi_draft.py "$INTEGRATION_DIR/wanyou_combined.html" --
 
 标题里的中文不要走命令行——用脚本文件里的 Python 字面量传，避免编码问题。
 
+**草稿页头与 H5 完全一致**：正文 HTML 由 `generators/wechat_inline.py` 生成，`publish_xiumi_draft.py` 现在会把同一个横幅（仓库根目录 `badge.jpg`）和同一行元信息（生成时间 + 校历周次）一起带给秀米——别再单独给秀米写一套页头。横幅走本地文件路径转 CDN，日志里会多一条 `xiumi_image_cdn_inline`。
+
 推完**先看日志**再下结论（`output/xiumi_debug/*.jsonl`）：
 
 | 日志 | 正常值 |
@@ -136,7 +148,8 @@ python scripts/publish_xiumi_draft.py "$INTEGRATION_DIR/wanyou_combined.html" --
 | `xiumi_style_aware_blocks` | 十几到二十几（整篇只 1 个 = 分块退化，见下方「坑 8」） |
 | `xiumi_comps_built` | `ok:true`，`compCount` 与上面一致 |
 | `xiumi_render_style_probe` | `modelStyle` 与 `domStyle` 都在几百量级 |
-| `xiumi_image_cdn_inline` / `xiumi_image_cdn_failed` | 每张本地图都应有 `_cdn_inline` |
+| `xiumi_image_cdn_inline` / `xiumi_image_cdn_failed` | 每张本地图都应有 `_cdn_inline`；**总数 = 正文图 + 页头横幅** |
+| `xiumi_hero_badge` / `xiumi_hero_meta` | 记下横幅路径与元信息文本，页头缺失时先看这两条 |
 
 草稿存好后浏览器会保持打开供人工微调，让用户在终端按回车结束。
 
