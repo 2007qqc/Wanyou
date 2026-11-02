@@ -82,6 +82,23 @@ wording → drop, a year later than the publish date → keep, every parsed date
 publish date → drop, otherwise ask the LLM and **drop on `unknown`**. Posts with a title but
 no body are never dropped for being thin — `_title_only_summary` writes a fallback digest.
 
+**原文链接也来自这个接口**：`/web/mp/content` 返回的完整页面里带 `msg_link`
+（`?__biz=…&mid=…&idx=…&sn=…`），`CONTENT_JS` 会把它一起抽出来写进 `item["url"]`，
+成稿卡片就是真链接，不再是「原文链接待补」。`originalId` 依旧拼不出链接（`/s/<id>`
+返回 200 但是「参数错误」页），别再走那条路。`WECHAT_LINKS_TSV` 只作为覆盖/兜底。
+
+Date parsing lives in `wanyou/date_ranges.py` (`parse_dates`, `parse_deadline_dates`) and
+handles what the old single regex missed: `11.5` / `11/7` (numeric, context-gated so `v1.5`
+and `12.5%` are not dates), ranges `11月7—8日` / `11.7-11.8` / `11月30日—12月2日`, and
+year rollover (`1月10日` in a December issue → next year). Deadline detection also scans
+「截止/报名截止」 lines with that parser, so `deadline_on_publish_day` fires for `11.2` too.
+Regression it fixed: 2026-11-02 的《无偿献血》写 11.7–11.8，曾被判 `llm:expired:…早于见刊日`。
+
+**Image-only posts** (body shorter than `WECHAT_IMAGE_ONLY_MAX_CHARS` = 120 but carrying
+images) have no parseable date; instead of asking the LLM and dropping on `unknown`, they are
+kept with reason `image_only_keep` when `WECHAT_IMAGE_ONLY_KEEP` is on (default). Retro
+titles still get dropped by the rule above, so only forward-looking posters survive.
+
 Two extra publication-window rules:
 
 - **Deadline on the publish date (next Monday) is not kept** — `temporal_filter` uses
@@ -175,6 +192,7 @@ python scripts/run_wanyou_module.py login --raw-only --md-only
 - Selenium cache permissions can fail in restricted environments; `config.SELENIUM_CACHE_DIR` controls the cache path.
 - Some campus URLs can go stale after site revisions; verify source URLs before changing parsers.
 - Login-only sources should be skipped during public-only tests.
-- WeChat listing (`WECHAT_SOURCE="weread"`) needs a logged-in debug Chrome; `-2041` is the Tencent captcha not passed (solve it in that browser window and re-run), `-2010` means the weread login expired, and `-2003` means the request parameters were malformed (`errMsg` says so verbatim — check the `bookId` and the URL actually sent; it is **not** rate limiting).
+- WeChat listing (`WECHAT_SOURCE="weread"`) needs a logged-in debug Chrome. `-2041` is the Tencent captcha: `call_with_risk_control_wait` focuses that window, prints a prompt for the user, retries every 5s, reports progress every 60s and resumes automatically once the captcha clears (cap `WEREAD_RISK_WAIT_SECONDS`, default 600s). Do **not** kill the job, restart that Chrome, or re-run while it waits — the login and captcha trust live in that window. `-2010` means the weread login expired, and `-2003` means the request parameters were malformed (`errMsg` says so verbatim — check the `bookId` and the URL actually sent; it is **not** rate limiting).
+- 「近一周」的窗口口径在 `wanyou/recent_window.py`：默认按校历周对齐（上一校历周周一 00:00 起），不是滚动 `now - 7×24h`；抓取、正文补全、prefilter 三处共用同一 cutoff。`WECHAT_RECENT_ALIGN=week|day|rolling` 可切换。
 - Rollback route `WECHAT_SOURCE="mptext"` may return session errors (`ret=-1`, `ret=401`, `ret=200003`) — refresh `WECHAT_PUBLIC_API_KEY` and re-run.
 - Xiumi page structure changes (CSS selectors, Angular scope) can break automation — check `output/xiumi_debug/*.jsonl` first.

@@ -133,18 +133,62 @@ def _parse_wechat_brief(result):
     return lede, digest
 
 
+_CREDIT_SEGMENT_RE = re.compile(
+    r"^\s*(?:策划|文案|排版|审核|责编|编辑|摄影|图片|设计|校对|美编|记者|来源|供稿|文字|制图|视频|剪辑)"
+    r"\s*[丨|｜|：:]\s*[^\n]{0,40}$",
+    re.MULTILINE,
+)
+
+
+def _strip_credit_segments(text):
+    """去掉「策划丨张三 文案丨李四 排版丨王五 审核丨赵六」这种署名行。
+
+    图片型推送的读书内文基本只有这一行署名，喂给模型就会得到「策划丨… 文案丨…」
+    这种毫无信息的摘要（本期 15 条里出现两次）。
+    """
+
+    if not text:
+        return ""
+    kept = [line for line in text.splitlines() if not _CREDIT_SEGMENT_RE.match(line)]
+    return re.sub(r"\s+", " ", "\n".join(kept)).strip()
+
+
+def _image_only_summary(item):
+    """图片型推送（正文只有署名、信息全在图里）的摘要兜底。
+
+    套用 `_title_only_summary` 会写成「课程安排、申请条件见原文」，对活动推送是错的；
+    这里只陈述「标题 + 原文是图片」。
+    """
+
+    title = re.sub(r"\s+", " ", (item.get("title") or "").strip()).strip("。")
+    if not title:
+        return ""
+    account = (item.get("account_keyword") or "").strip()
+    where = f"公众号「{account}」原文" if account else "公众号原文"
+    return f"{title}。原文以图片为主，时间、地点、报名方式等细节见{where}。"
+
+
 def summarize_wechat_item(item):
     """生成公众号条目的 (要点透视, 摘要)。
 
     要点透视只承担形式信息（对象、时间、地点、报名/截止），摘要只承担内容信息
-    （项目/活动简介、比赛或活动流程、亮点）。两者都短，避免过去两条几乎同文。
+    （项目/活动简介、比赛或活动流程、亮点）。摘要可以长，但不要空话。
     """
     title = (item.get("title") or "").strip()
     digest = _rule_clean_markdown(item.get("digest") or "")
-    content = _rule_clean_markdown(item.get("content") or "")
+    content = _strip_credit_segments(_rule_clean_markdown(item.get("content") or ""))
     snippet = "\n".join(part for part in [digest, content] if part).strip()
     lede_limit = getattr(config, "WECHAT_LEDE_MAX_CHARS", 45)
     summary_limit = getattr(config, "WECHAT_SUMMARY_MAX_CHARS", 110)
+
+    # 材料只剩署名（正文全是图）：别再让模型硬编，用图片型兜底
+    if len(snippet) < 80:
+        fallback = (
+            _strip_meta_sentences(_image_only_summary(item))
+            or _strip_meta_sentences(digest)
+            or _strip_meta_sentences(_title_only_summary(item))
+        )
+        return "", _clip_brief_text(fallback, summary_limit)
 
     if not snippet:
         return "", _strip_meta_sentences(_title_only_summary(item))[:summary_limit]

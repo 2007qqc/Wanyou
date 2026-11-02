@@ -120,6 +120,13 @@ WECHAT_ARTICLE_SIZE = 20
 WECHAT_DOWNLOAD_FORMAT = "html"
 WECHAT_DAYS_LIMIT = 0
 WECHAT_MAIN_RECENT_DAYS = 7
+# 「近一周」的窗口口径（见 wanyou/recent_window.py）：
+#   "week"    —— 上一校历周周一 00:00 起（默认；滚动窗口会漏掉边界日白天的推送）
+#   "day"     —— 今天 00:00 往前 N 天
+#   "rolling" —— 老的 now - N×24h
+WECHAT_RECENT_ALIGN = os.environ.get("WECHAT_RECENT_ALIGN", "week").strip().lower()
+# 撞上微信读书人机校验（-2041）时，程序提示用户手动完成后原地等待的上限（秒）
+WEREAD_RISK_WAIT_SECONDS = _env_int("WEREAD_RISK_WAIT_SECONDS", 600)
 
 # 公众号抓取来源：
 #   "weread"  —— 微信读书网页版（默认；一次运行即可抓满一周，不依赖任何第三方域名）
@@ -275,13 +282,19 @@ WECHAT_BRIEF_SYSTEM_PROMPT = (
     "不超过 40 字。\n"
     "「摘要」只写内容信息：这是什么活动或项目、项目简介、比赛或活动流程、亮点。"
     "不重复对象、时间、地点；不写编者视角（材料、原文、来源为、日期显示为、公众号、推送、标题）；"
-    "不超过 80 字。\n"
-    "两段都要短、要有信息量，不要空话和客套话。\n"
+    "写 120–180 字，把材料里的具体信息尽量写进来（分组、奖项、报名方式、作品要求、流程环节等），"
+    "不要只写一句概括。\n"
+    "要点透视要短，摘要可以长；两段都不要空话和客套话。\n"
     '只输出 JSON：{"lede":"要点透视","digest":"摘要"}，不要输出任何其他内容。'
 )
 WECHAT_LEDE_MAX_CHARS = _env_int("WECHAT_LEDE_MAX_CHARS", 45)
-WECHAT_SUMMARY_MAX_CHARS = _env_int("WECHAT_SUMMARY_MAX_CHARS", 110)
-# 人工补链接表（标题<TAB>mp 链接，可选）：weread 不返回原文地址，这个文件存在就优先用它。
+WECHAT_SUMMARY_MAX_CHARS = _env_int("WECHAT_SUMMARY_MAX_CHARS", 220)
+# 图片型推送（正文极短、信息都在图里）没有可解析日期时：保留待人工，而不是按 unknown 丢掉
+WECHAT_IMAGE_ONLY_KEEP = _env_bool("WECHAT_IMAGE_ONLY_KEEP", True)
+WECHAT_IMAGE_ONLY_MAX_CHARS = _env_int("WECHAT_IMAGE_ONLY_MAX_CHARS", 120)
+# 人工补链接表（标题<TAB>mp 链接，可选）：原文链接现在由 weread 的 /web/mp/content
+# 页面里的 msg_link 自动补全（weread_client.fetch_article_contents）；这个表只用来
+# 覆盖个别取不到页面、或想换成官方短链的条目。
 # 公众号时效闸门：日期解析不出来时交给 LLM 判，不确定即弃（防过期推送混入）
 WECHAT_FRESHNESS_GATE = True
 WECHAT_LINKS_TSV = "output/week6_20261019/wechat_links.tsv"

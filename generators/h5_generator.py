@@ -7,6 +7,7 @@ from typing import Dict, List, Tuple
 import config
 from generators.text_spans import highlight_time_spans
 from wanyou.image_paths import clean_markdown_image_target, is_remote_or_data_image, resolve_existing_image_path
+from wanyou.inline_images import embed_local_images
 
 
 THEME_SOURCE_DIR = os.path.normpath(
@@ -96,18 +97,55 @@ def ensure_theme_assets(target_path: str) -> Dict[str, str]:
 
 
 HIGHLIGHTS_TITLE_LINE = "# 本期要点速递"
+HIGHLIGHTS_SECTION_TITLE = "本期要点速递"
 
 
 def _fallback_highlights(text: str, limit: int = 5) -> List[str]:
-    """从各栏目的要点透视里挑当期最值得先看的几条（没有 LLM 时用）。"""
-    picks: List[str] = []
+    """从各条目的要点透视里拼「本期要点速递」（LLM 那条路返回空时用）。
+
+    形如「无偿献血：11月7—8日8:00—14:00」：条目名 + 带日期的那一段。
+    只取「要点透视」的第一个分句会得到「全校师生」这种没有信息量的碎片，
+    所以这里在分句里挑**含日期**的那一句，并按日期从近到远排序。
+    """
+
+    import datetime as _dt
+
+    from wanyou.date_ranges import parse_dates
+
+    today = _dt.date.today()
+    candidates: List[tuple] = []
     for section in re.split(r"^# ", text or "", flags=re.M)[1:]:
-        title = section.split("\n")[0].strip()
-        lede = re.search(r"要点透视：(.+)", section)
-        if lede:
-            sentence = re.split(r"[。；]", lede.group(1).strip())[0]
-            if sentence:
-                picks.append(f"{sentence}（{title}）")
+        for block in re.split(r"^## ", section, flags=re.M)[1:]:
+            lines = block.split("\n")
+            item_title = lines[0].strip()
+            lede_match = re.search(r"要点透视[：:](.+)", block)
+            if not item_title or not lede_match:
+                continue
+            short_title = item_title if len(item_title) <= 16 else item_title[:15].rstrip() + "…"
+            lede = lede_match.group(1).strip()
+            fragments = [frag.strip() for frag in re.split(r"[。；;]", lede) if frag.strip()]
+            if not fragments:
+                continue
+            dates = sorted(d for d in parse_dates(lede, reference=today) if d >= today)
+            if dates:
+                fragment = next(
+                    (frag for frag in fragments if parse_dates(frag, reference=today)),
+                    fragments[0],
+                )
+                line = f"{short_title}：{fragment}"
+                rank = (0, dates[0].toordinal())
+            else:
+                line = f"{short_title}：{fragments[0]}"
+                rank = (1, 0)
+            if len(line) > 46:
+                line = line[:45] + "…"
+            candidates.append((rank, line))
+
+    candidates.sort(key=lambda pair: pair[0])
+    picks: List[str] = []
+    for _, line in candidates:
+        if line not in picks:
+            picks.append(line)
         if len(picks) >= limit:
             break
     return picks
@@ -123,7 +161,7 @@ def _strip_bullet_marker(line: str) -> str:
 
 def _build_highlights(text: str, limit: int = 5) -> List[str]:
     """给「本期要点速递」写 5 条，只要当期最该先知道的事。"""
-    ledes = re.findall(r"要点透视：(.+)", text or "")
+    ledes = re.findall(r"要点透视[：:](.+)", text or "")
     if not ledes:
         return []
     if getattr(config, "LLM_ENABLED", False):
@@ -301,7 +339,6 @@ def _highlight_time_text(text: str) -> str:
     return highlight_time_spans(html.escape(text or ""))
 
 
-<<<<<<< HEAD
 # ── 一键复制到秀米 / 公众号 ─────────────────────────────────────────────────
 # 公众号和秀米只认内联 style，所以复制源直接用 wechat_inline 产出的那份内联
 # HTML —— 和手工粘进编辑器的是同一份，保证「所复即所粘」。页面本体仍是带 class
@@ -421,9 +458,6 @@ def markdown_to_h5_html(
     hero_badge_src: str = "",
     hero_meta: str = "",
 ) -> str:
-=======
-def markdown_to_h5_html(markdown_text: str, markdown_path: str, output_path: str, title: str = "") -> str:
->>>>>>> 319500b94447db31f5ff354bce92613fd8c603cb
     page_title = _safe_title(title)
     theme_assets = ensure_theme_assets(output_path)
     badge_rel = ""
@@ -436,6 +470,7 @@ def markdown_to_h5_html(markdown_text: str, markdown_path: str, output_path: str
     blocks: List[str] = []
     article_open = False
     section_open = False
+    highlights_open = False
 
     def close_article():
         nonlocal article_open
@@ -444,9 +479,12 @@ def markdown_to_h5_html(markdown_text: str, markdown_path: str, output_path: str
             article_open = False
 
     def close_section():
-        nonlocal section_open
+        nonlocal section_open, highlights_open
         if section_open:
             close_article()
+            if highlights_open:
+                blocks.append("</div>")  # .highlights-box
+                highlights_open = False
             blocks.append("</section>")
             section_open = False
 
@@ -506,12 +544,17 @@ def markdown_to_h5_html(markdown_text: str, markdown_path: str, output_path: str
             current_section = stripped[2:].strip()
             # 栏目导语已去掉：硬编码的导语每期重复、和卡片内容重复，且常与当期事实
             # 矛盾（十月还写「天气渐暖」）。栏目头保留 kicker + 标题即可。
-            blocks.append("<section class='section'>")
+            is_highlights = current_section == HIGHLIGHTS_SECTION_TITLE
+            blocks.append("<section class='section highlights'>" if is_highlights else "<section class='section'>")
             blocks.append("<div class='section-head'>")
             blocks.append("<span class='section-kicker'>本期栏目</span>")
             blocks.append(f"<h2>{html.escape(current_section)}</h2>")
             blocks.append("</div>")
             section_open = True
+            if is_highlights:
+                # 速递整段套一个和卡片同款的文本框，读起来不再是一串裸列表
+                blocks.append("<div class='highlights-box'>")
+                highlights_open = True
             continue
 
         if stripped.startswith("## "):
@@ -585,6 +628,10 @@ def markdown_to_h5_html(markdown_text: str, markdown_path: str, output_path: str
     if badge_mini_rel:
         footer_badge = f"<img class='footer-badge' src='{html.escape(badge_mini_rel)}' alt='物理系风格标识' loading='lazy' />"
 
+    # 只有拿到内联正文才挂复制按钮；没有就不往页面里塞死代码
+    copy_css = _COPY_CSS if copy_source_html else ""
+    copy_block = build_copy_block(copy_source_html) if copy_source_html else ""
+
     return f'''<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -606,8 +653,12 @@ def markdown_to_h5_html(markdown_text: str, markdown_path: str, output_path: str
       --shadow: 0 22px 50px rgba(92, 74, 16, 0.08);
     }}
     * {{ box-sizing: border-box; }}
+    /* 卡片右下角的折角（.card-notch）是故意探出去的装饰，手机上会多出 9px 横向滚动；
+       overflow-x 要同时放在 html 上，光放 body 挡不住 documentElement.scrollWidth。 */
+    html {{ overflow-x: hidden; }}
     body {{
       margin: 0;
+      overflow-x: hidden;
       background:
         radial-gradient(circle at top right, rgba(245, 200, 51, 0.12), transparent 24%),
         radial-gradient(circle at left 20%, rgba(171, 211, 224, 0.18), transparent 18%),
@@ -652,8 +703,7 @@ def markdown_to_h5_html(markdown_text: str, markdown_path: str, output_path: str
     .section-kicker::after {{ content: ""; position: absolute; top: 0; right: -18px; border-left: 18px solid rgba(245, 200, 51, 0.7); border-top: 16px solid transparent; border-bottom: 16px solid transparent; }}
     .section h2 {{ margin: 4px 0 0; font-size: 28px; line-height: 1.2; }}
     .section-lead {{ margin: 8px 0 0; color: var(--muted); font-size: 15px; line-height: 1.8; }}
-    .card {{ position: relative; margin: 14px 0 0; padding: 16px 16px 14px; background: var(--paper); border: 1px solid var(--line); box-shadow: 0 10px 24px rgba(92, 74, 16, 0.05); }}
-    .card + .card {{ margin-top: 12px; }}
+    .card {{ position: relative; margin: 14px 0 0; padding: 16px 16px 14px; background: var(--paper); border: 1px solid var(--line); box-shadow: 0 10px 24px rgba(92, 74, 16, 0.05); }}    .card + .card {{ margin-top: 12px; }}
     .card-notch {{ position: absolute; right: -1px; bottom: -1px; width: 22px; height: 22px; border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); transform: rotate(-45deg) translate(9px, 9px); background: var(--paper); transform-origin: center; }}
     .card h3 {{ margin: 0 0 10px; font-size: 22px; line-height: 1.5; }}
     .subhead {{ margin: 14px 0 6px; font-size: 16px; color: var(--accent-ink); border-left: 4px solid rgba(171, 211, 224, 0.95); padding-left: 8px; }}
@@ -668,6 +718,9 @@ def markdown_to_h5_html(markdown_text: str, markdown_path: str, output_path: str
     .note {{ color: var(--ink); font-size: 14px; }}
     .bullet {{ position: relative; padding-left: 1.1em; }}
     .bullet::before {{ content: "•"; position: absolute; left: 0; color: var(--accent-ink); }}
+    /* 「本期要点速递」整段套一个和卡片同款的圆角文本框 */
+    .highlights-box {{ margin: 12px 0 4px; padding: 14px 18px 16px; background: var(--paper); border: 1px solid var(--line); border-radius: 18px; box-shadow: 0 10px 24px rgba(92, 74, 16, 0.05); }}
+    .highlights-box .bullet {{ margin: 7px 0; line-height: 1.85; }}
     .table-wrap {{ margin: 12px 0; overflow-x: auto; border: 1px solid rgba(213, 165, 28, 0.45); border-radius: 8px; background: #fffdf6; }}
     .info-table {{ width: 100%; border-collapse: collapse; min-width: 420px; font-size: 14px; line-height: 1.65; }}
     .info-table th, .info-table td {{ padding: 8px 10px; border-bottom: 1px solid rgba(213, 165, 28, 0.26); border-right: 1px solid rgba(213, 165, 28, 0.18); text-align: left; vertical-align: top; }}
@@ -693,26 +746,15 @@ def markdown_to_h5_html(markdown_text: str, markdown_path: str, output_path: str
       .meta-row {{ display: block; }}
       .meta-label {{ display: block; min-width: 0; margin-bottom: 2px; }}
     }}
+    {copy_css}
   </style>
 </head>
 <body>
   <main class="page">
     <header class="hero">
-<<<<<<< HEAD
       <h1>{html.escape(page_title)}</h1>
       {hero_meta_html}
       {hero_banner}
-=======
-      <div class="hero-top">
-        {hero_badge}
-        <div>
-          <span class="hero-mark">清物语 · 物理系风格</span>
-          <p class="hero-sub">清华大学物理系校园信息整理</p>
-        </div>
-      </div>
-      <p>参考人工编辑版万有预报的公众号排版节奏，保留物理系熟悉的暖黄色标签、纸片感信息卡和系内识别贴图，让自动生成的版本也尽量像一篇认真整理过的推送。</p>
-      <div class="hero-note">天气渐暖，大家注意增减衣物。以下内容按栏目整理，方便直接转成物理系风格的万有预报。</div>
->>>>>>> 319500b94447db31f5ff354bce92613fd8c603cb
     </header>
     {body_html}
     <footer class="page-footer">
@@ -720,6 +762,7 @@ def markdown_to_h5_html(markdown_text: str, markdown_path: str, output_path: str
       <div class="footer-note">本期万有预报到这里就结束了。<br />万有预报，下期再见。</div>
     </footer>
   </main>
+  {copy_block}
 </body>
 </html>
 '''
@@ -744,7 +787,6 @@ def export_h5(markdown_path: str, output_path: str, title: str = "") -> str:
     with open(markdown_path, "r", encoding="utf-8") as f:
         markdown_text = f.read()
 
-<<<<<<< HEAD
     # 延迟导入：wechat_inline 依赖本模块的常量，模块级导入会成环
     from generators.wechat_inline import markdown_to_wechat_inline_html
     from wanyou import academic_calendar
@@ -795,9 +837,6 @@ def export_h5(markdown_path: str, output_path: str, title: str = "") -> str:
             f"[page] {page_remaining} 张本地图片没能内嵌（超出预算或读取失败），"
             "HTML 单独移动后这些图片会找不到"
         )
-=======
-    html_text = markdown_to_h5_html(markdown_text, markdown_path=markdown_path, output_path=output_path, title=title)
->>>>>>> 319500b94447db31f5ff354bce92613fd8c603cb
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     with open(output_path, "w", encoding="utf-8") as f:
         f.write(html_text)

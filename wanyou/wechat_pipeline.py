@@ -107,7 +107,7 @@ def mark_items_for_md(items):
         )
 
 
-_TITLE_NORM_RE = re.compile(r"[\s\u3000，。；：、！？“”\"'（）()—\-·｜|,.!:;【】\[\]]+")
+_TITLE_NORM_RE = re.compile(r"[\s\u3000，。；：、！？“”\"'（）()—\-·｜|丨,.!:;【】\[\]]+")
 
 
 def _normalized_title(title):
@@ -163,7 +163,10 @@ def _prefilter_recent_wechat_items(items, days_limit=None):
         return []
 
     if days_limit:
-        cutoff_dt = datetime.datetime.now() - datetime.timedelta(days=max(int(days_limit), 0))
+        # 与 weread 抓取阶段共用同一口径（校历周对齐），不要各算各的
+        from wanyou.recent_window import window_start
+
+        cutoff_dt = window_start(days_limit)
     else:
         cutoff_dt = current_issue_cutoff()
     cutoff_ts = int(cutoff_dt.timestamp())
@@ -366,10 +369,10 @@ def write_md(items, output_path, include_content=True, header="# 其他公众号
 
 
 def _load_link_overrides():
-    """读取人工补的链接表：标题<TAB>链接。
+    """读取人工补的链接表：标题<TAB>链接（可选，优先级高于自动抓到的链接）。
 
-    weread 那条链路拿不到原文地址（见 weread_client 注释），所以留一个人工口子：
-    把 `output/.../wechat_links.tsv` 里填上「标题 制表符 mp 链接」，重跑就会带上。
+    自动链接来自 weread 的 ``/web/mp/content``（``msg_link``），正常情况下不需要这张表；
+    只有个别推送取不到页面、或想换成短链时才用它覆盖。
     """
     path = getattr(config, "WECHAT_LINKS_TSV", "")
     if not path:

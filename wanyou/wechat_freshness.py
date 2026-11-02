@@ -18,6 +18,7 @@ import re
 from typing import Dict, List, Optional
 
 import config
+from wanyou.date_ranges import parse_dates, parse_deadline_dates
 from wanyou.run_clock import effective_publish_datetime
 from wanyou.temporal_filter import DATE_PATTERN, extract_temporal_signals
 from wanyou.utils_dates import format_datetime_text
@@ -26,25 +27,33 @@ from wanyou.utils_llm import chat_complete
 RETRO_HINTS = (
     "回顾", "落幕", "圆满", "顺利举行", "成功举办", "成功举行", "精彩瞬间",
     "赛况", "已结束", "名单公示", "公示", "顺利召开", "圆满结束", "收官",
+    # 图片型推送常把「总结/纪实」写在标题里，正文只有几十字：不补这两个词，
+    # 它们会走 image_only_keep 被当成待人工条目留下来（已复现两条）。
+    "总结", "纪实",
 )
 
 _DATE_ONLY = re.compile(r"(\d{1,2})\s*月\s*(\d{1,2})\s*[日号]")
 
 
-def _dates_in(text: str, year: int) -> List[dt.datetime]:
-    found = []
-    for match in DATE_PATTERN.finditer(text or ""):
-        raw = match.group(1)
-        full = re.match(r"(20\d{2})[年\-/.](\d{1,2})[月\-/.](\d{1,2})", raw)
-        short = _DATE_ONLY.match(raw)
-        try:
-            if full:
-                found.append(dt.datetime(int(full.group(1)), int(full.group(2)), int(full.group(3))))
-            elif short:
-                found.append(dt.datetime(year, int(short.group(1)), int(short.group(2))))
-        except ValueError:
-            continue
-    return found
+def _dates_in(text: str, year: int, reference: Optional[dt.date] = None) -> List[dt.datetime]:
+    """日期解析走 wanyou/date_ranges：点分、区间、跨年都认。
+
+    只认「11月7日」的老实现对「11.5」「11月7—8日」返回空，规则短路后交给 LLM，
+    结果把未来日期判成过期（2026-11-02 无偿献血 11.7–11.8 被误杀）。
+    """
+
+    return [dt.datetime.combine(value, dt.time()) for value in parse_dates(text, year, reference)]
+
+
+def _is_image_only(item: Dict[str, object]) -> bool:
+    """正文极短但带图 —— 这类推送的信息基本都在图里。"""
+
+    content = str(item.get("content") or "").strip()
+    limit = int(getattr(config, "WECHAT_IMAGE_ONLY_MAX_CHARS", 120) or 120)
+    if len(content) > limit:
+        return False
+    images = item.get("image_entries") or item.get("image_urls") or []
+    return bool(images)
 
 
 def _has_retro_hint(title: str) -> str:
@@ -91,6 +100,17 @@ def decide_item(item: Dict[str, object], publish_dt: Optional[dt.datetime] = Non
                 "source": "rule",
             }
 
+    # 点分/区间的截止日期（「报名截止 11.8」）跑不进 extract_temporal_signals，
+    # 这里再按「截止」行单独解析一遍，别让它们漏过截止日判断。
+    for value in parse_deadline_dates(date_text, publish.year, publish.date()):
+        if value == publish.date():
+            return {
+                "keep": False,
+                "reason": "deadline_on_publish_day",
+                "evidence": value.strftime("%Y-%m-%d"),
+                "source": "rule",
+            }
+
     # 标题里出现晚于见刊日所在年份的年份（如「2027年寒假课程项目」），必然是未来的事，
     # 直接放行，不要交给 LLM——实测同结构的三个项目推广，模型会给出不同答案。
     # 只看标题/要点透视/摘要，避免正文里顺带提到的年份造成误判。
@@ -103,7 +123,7 @@ def decide_item(item: Dict[str, object], publish_dt: Optional[dt.datetime] = Non
             "source": "rule",
         }
 
-    dates = _dates_in(date_text, publish.year)
+    dates = _dates_in(date_text, publish.year, publish.date())
     future = [d for d in dates if d.date() >= (publish - dt.timedelta(hours=12)).date()]
     if dates and not future:
         latest = max(dates)
@@ -118,6 +138,17 @@ def decide_item(item: Dict[str, object], publish_dt: Optional[dt.datetime] = Non
             "keep": True,
             "reason": "future_date_found",
             "evidence": max(future).strftime("%Y-%m-%d"),
+            "source": "rule",
+        }
+
+    # 图片型推送（正文只有几十字、信息全在图里）没有可解析日期，交给 LLM 只会得到
+    # unknown 然后被丢掉。这类推送本来就是「海报 + 标题」，回顾类标题上面已经拦掉了，
+    # 剩下的按「保留待人工」处理，比一律丢掉更有用。
+    if _is_image_only(item) and getattr(config, "WECHAT_IMAGE_ONLY_KEEP", True):
+        return {
+            "keep": True,
+            "reason": "image_only_keep",
+            "evidence": "正文为图片，无可解析日期",
             "source": "rule",
         }
 

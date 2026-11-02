@@ -3,7 +3,12 @@ import os
 import re
 from typing import List, Tuple
 
-from generators.h5_generator import FOOTER_LINE, HEADER_SUBTITLE_LINE, HEADER_TITLE_LINE
+from generators.h5_generator import (
+    FOOTER_LINE,
+    HEADER_SUBTITLE_LINE,
+    HEADER_TITLE_LINE,
+    HIGHLIGHTS_SECTION_TITLE,
+)
 from generators.text_spans import INLINE_TIME_SPAN, highlight_time_spans
 from wanyou.image_paths import clean_markdown_image_target, is_remote_or_data_image, resolve_existing_image_path
 
@@ -27,7 +32,6 @@ META_LABELS = {
     "活动时间",
 }
 
-<<<<<<< HEAD
 PAGE_TITLE = "万有预报"
 
 # ── 尺寸与配色，取自 h5_generator 的 CSS 变量，保证两份产物是同一套视觉 ──
@@ -77,6 +81,11 @@ HERO_BANNER_STYLE = (
 HERO_META_STYLE = f"margin:10px 0 0;color:{MUTED};font-size:14px;line-height:1.8;"
 
 SECTION_STYLE = "margin:24px 0 0;padding:0;"
+# 「本期要点速递」的文本框：与 H5 的 .highlights-box 同款（白底 + 黄边 + 圆角）
+HIGHLIGHTS_BOX_STYLE = (
+    f"margin:12px 0 4px;padding:14px 18px 16px;background:{PAPER};border:1px solid {ACCENT_LINE};"
+    "border-radius:18px;box-shadow:0 10px 24px rgba(92,74,16,0.05);"
+)
 # H5 的 kicker 是「药丸 + ::after 三角」；这里用「药丸 span + border 三角 span」拼同样的形状
 SECTION_TAG_STYLE = (
     "display:inline-block;margin:0 0 8px;padding:.45em .8em;background:rgba(245,200,51,0.7);"
@@ -117,24 +126,6 @@ LEDE_TEXT_STYLE = f"margin:0;color:{INK};font-size:15px;line-height:1.9;"
 # 字段行对齐 H5 在手机上的表现：标签独占一行，取值在下一行（@media max-width:640px）
 META_ROW_STYLE = f"margin:7px 0;color:{INK};font-size:15px;line-height:1.75;word-break:break-word;overflow-wrap:anywhere;"
 META_LABEL_STYLE = f"display:block;margin:0 0 2px;color:{MUTED};font-size:13px;letter-spacing:.04em;"
-=======
-PAGE_STYLE = "margin:0 auto;padding:0 0 8px;background:#fffaf0;color:#3d3525;font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue','PingFang SC','Microsoft YaHei',sans-serif;line-height:1.75;font-size:15px;"
-HERO_STYLE = "margin:0 0 18px;padding:22px 18px 20px;border:1px solid #ead9a8;background:#fff3c4;border-radius:12px;"
-HERO_MARK_STYLE = "display:inline-block;margin-bottom:8px;padding:3px 8px;background:#f96e57;color:#fff;border-radius:999px;font-size:12px;letter-spacing:.08em;"
-H1_STYLE = "margin:0;color:#312714;font-size:26px;font-weight:800;line-height:1.25;"
-SUBTITLE_STYLE = "margin:8px 0 0;color:#7a6a45;font-size:14px;"
-SECTION_STYLE = "margin:22px 0 0;padding:0;"
-SECTION_TAG_STYLE = "display:inline-block;margin:0 0 8px;padding:4px 10px;background:#f5c833;color:#fff;border-radius:4px;font-size:13px;letter-spacing:.08em;"
-SECTION_TITLE_STYLE = "margin:0;color:#312714;font-size:22px;font-weight:800;line-height:1.35;"
-SECTION_LEAD_STYLE = "margin:8px 0 10px;color:#7d704d;font-size:14px;line-height:1.7;"
-CARD_STYLE = "margin:12px 0 0;padding:15px 14px;background:#fffdf6;border:1px solid #ecdcae;border-radius:10px;box-shadow:0 4px 14px rgba(120,90,20,.06);"
-CARD_TITLE_STYLE = "margin:0 0 10px;color:#322714;font-size:18px;font-weight:700;line-height:1.45;"
-PARA_STYLE = "margin:8px 0;color:#443929;font-size:15px;line-height:1.75;"
-LEDE_STYLE = "margin:10px 0;padding:10px 12px;background:#fff0df;border-left:4px solid #f96e57;border-radius:6px;"
-LEDE_TAG_STYLE = "margin:0 0 4px;color:#f96e57;font-size:13px;font-weight:700;"
-META_ROW_STYLE = "margin:5px 0;color:#4f432f;font-size:14px;line-height:1.65;"
-META_LABEL_STYLE = "display:inline-block;margin-right:6px;color:#8f7a49;font-weight:700;"
->>>>>>> 319500b94447db31f5ff354bce92613fd8c603cb
 TIME_VALUE_STYLE = "color:#f96e57;font-weight:700;"
 LINK_STYLE = "color:#2f6f9f;text-decoration:underline;word-break:break-all;"
 BULLET_STYLE = "margin:6px 0 6px 1em;color:#443929;font-size:15px;line-height:1.7;"
@@ -234,6 +225,7 @@ def markdown_to_wechat_inline_html(
     blocks: List[str] = [f"<section style=\"{PAGE_STYLE}\">"]
     section_open = False
     card_open = False
+    highlights_open = False
 
     def close_card():
         nonlocal card_open
@@ -242,14 +234,17 @@ def markdown_to_wechat_inline_html(
             card_open = False
 
     def close_section():
-        nonlocal section_open
+        nonlocal section_open, highlights_open
         close_card()
+        if highlights_open:
+            blocks.append("</section>")  # .highlights-box
+            highlights_open = False
         if section_open:
             blocks.append("</section>")
             section_open = False
 
     def open_section(title: str):
-        nonlocal section_open
+        nonlocal section_open, highlights_open
         close_section()
         # 不再写栏目导语：原来的硬编码导语（「这周和课程、选课、学业节奏直接相关的
         # 更新，先看这里。」）每个栏目每期都一样，既和下面那张卡片重复，又常常和当期
@@ -258,6 +253,10 @@ def markdown_to_wechat_inline_html(
         blocks.append(f"<span style=\"{SECTION_TAG_STYLE}\">本期栏目</span>")
         blocks.append(f"<h2 style=\"{SECTION_TITLE_STYLE}\">{html.escape(title)}</h2>")
         section_open = True
+        if title == HIGHLIGHTS_SECTION_TITLE:
+            # 与 H5 一致：速递内容也套一个文本框
+            blocks.append(f"<section style=\"{HIGHLIGHTS_BOX_STYLE}\">")
+            highlights_open = True
 
     def open_card(title: str):
         nonlocal card_open
@@ -266,7 +265,6 @@ def markdown_to_wechat_inline_html(
         blocks.append(f"<h3 style=\"{CARD_TITLE_STYLE}\">{html.escape(title)}</h3>")
         card_open = True
 
-<<<<<<< HEAD
     hero_banner = ""
     if hero_badge_src:
         hero_banner = (
@@ -280,11 +278,6 @@ def markdown_to_wechat_inline_html(
         blocks.append(f"<p style=\"{HERO_META_STYLE}\">{html.escape(hero_meta)}</p>")
     if hero_banner:
         blocks.append(hero_banner)
-=======
-    blocks.append(f"<section style=\"{HERO_STYLE}\">")
-    blocks.append(f"<span style=\"{HERO_MARK_STYLE}\">清物语 · 物理系风格</span>")
-    blocks.append(f"<p style=\"{SUBTITLE_STYLE}\">清华大学物理系校园信息整理</p>")
->>>>>>> 319500b94447db31f5ff354bce92613fd8c603cb
     blocks.append("</section>")
 
     lines = (markdown_text or "").splitlines()
